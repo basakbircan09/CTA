@@ -7,7 +7,7 @@ import numpy as np
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget,
     QHBoxLayout, QVBoxLayout, QPushButton, QLabel, QMessageBox, QTextEdit,
-    QFileDialog, QGroupBox, QGridLayout, QDoubleSpinBox, QSpinBox
+    QFileDialog, QGroupBox, QGridLayout, QDoubleSpinBox, QSpinBox, QComboBox
 )
 from PySide6.QtGui import QPixmap, QImage
 from PySide6.QtCore import Qt, QTimer
@@ -112,6 +112,42 @@ class SimpleStageApp(QMainWindow):
         self.btn_set_gain = QPushButton("Set")
         self.btn_set_gain.clicked.connect(self.on_set_gain)
         cam_layout.addWidget(self.btn_set_gain, 1, 2)
+
+        # White Balance presets
+        cam_layout.addWidget(QLabel("White Bal:"), 2, 0)
+        self.combo_wb = QComboBox()
+        self.combo_wb.addItems(["Default", "Warm", "Cool", "Reduce NIR", "Custom"])
+        self.combo_wb.currentTextChanged.connect(self.on_wb_preset_changed)
+        cam_layout.addWidget(self.combo_wb, 2, 1, 1, 2)
+
+        # White Balance RGB sliders (for Custom)
+        cam_layout.addWidget(QLabel("R:"), 3, 0)
+        self.spin_wb_r = QDoubleSpinBox()
+        self.spin_wb_r.setRange(0.1, 4.0)
+        self.spin_wb_r.setValue(1.0)
+        self.spin_wb_r.setSingleStep(0.1)
+        self.spin_wb_r.setDecimals(2)
+        cam_layout.addWidget(self.spin_wb_r, 3, 1, 1, 2)
+
+        cam_layout.addWidget(QLabel("G:"), 4, 0)
+        self.spin_wb_g = QDoubleSpinBox()
+        self.spin_wb_g.setRange(0.1, 4.0)
+        self.spin_wb_g.setValue(1.0)
+        self.spin_wb_g.setSingleStep(0.1)
+        self.spin_wb_g.setDecimals(2)
+        cam_layout.addWidget(self.spin_wb_g, 4, 1, 1, 2)
+
+        cam_layout.addWidget(QLabel("B:"), 5, 0)
+        self.spin_wb_b = QDoubleSpinBox()
+        self.spin_wb_b.setRange(0.1, 4.0)
+        self.spin_wb_b.setValue(1.0)
+        self.spin_wb_b.setSingleStep(0.1)
+        self.spin_wb_b.setDecimals(2)
+        cam_layout.addWidget(self.spin_wb_b, 5, 1, 1, 2)
+
+        self.btn_apply_wb = QPushButton("Apply WB")
+        self.btn_apply_wb.clicked.connect(self.on_apply_white_balance)
+        cam_layout.addWidget(self.btn_apply_wb, 6, 0, 1, 3)
 
         left_panel.addWidget(cam_group)
 
@@ -475,6 +511,33 @@ class SimpleStageApp(QMainWindow):
             self.log(f"Gain set to {gain:.1f}", "info")
         except Exception as e:
             self.log(f"Set gain error: {e}", "error")
+
+    def on_wb_preset_changed(self, preset: str):
+        """Update RGB spinboxes when white balance preset changes."""
+        presets = {
+            "Default": (1.0, 1.0, 1.0),
+            "Warm": (1.0, 0.9, 0.7),
+            "Cool": (0.9, 1.0, 1.2),
+            "Reduce NIR": (0.6, 0.8, 1.0),
+            "Custom": None  # Don't change spinboxes for custom
+        }
+        if preset in presets and presets[preset] is not None:
+            r, g, b = presets[preset]
+            self.spin_wb_r.setValue(r)
+            self.spin_wb_g.setValue(g)
+            self.spin_wb_b.setValue(b)
+            self.on_apply_white_balance()
+
+    def on_apply_white_balance(self):
+        """Apply white balance from RGB spinbox values."""
+        try:
+            r = self.spin_wb_r.value()
+            g = self.spin_wb_g.value()
+            b = self.spin_wb_b.value()
+            self.camera.set_white_balance(r, g, b)
+            self.log(f"White balance set to R={r:.2f} G={g:.2f} B={b:.2f}", "info")
+        except Exception as e:
+            self.log(f"Set white balance error: {e}", "error")
 
     # ---------- stage control handlers ----------
 

@@ -22,6 +22,8 @@ class ThorlabsCamera:
         self._dll_dir = dll_dir
         self._cam = None
         self._connected = False
+        # White balance RGB gains (applied in software)
+        self._white_balance = (1.0, 1.0, 1.0)
 
     @property
     def is_connected(self) -> bool:
@@ -105,6 +107,9 @@ class ThorlabsCamera:
                 gray_test = cv2.cvtColor(data, cv2.COLOR_BGR2GRAY)
                 if np.std(data[:, :, 0] - gray_test) < 10:  # Low variance suggests not color
                     data = cv2.cvtColor(data, cv2.COLOR_RGB2BGR)
+            # Apply white balance if not default (1,1,1)
+            if self._white_balance != (1.0, 1.0, 1.0):
+                data = self._apply_white_balance(data)
             return data  # Return color BGR directly
         elif data.ndim == 2:  # 2D grayscale
             if data.dtype == np.uint16:
@@ -155,3 +160,27 @@ class ThorlabsCamera:
             raise RuntimeError("Camera not connected")
         if hasattr(self._cam, "set_gain"):
             self._cam.set_gain(gain)
+
+    # ---------- White Balance (Software) ----------
+
+    def get_white_balance(self) -> tuple[float, float, float]:
+        """Get current white balance RGB gains."""
+        return self._white_balance
+
+    def set_white_balance(self, red: float, green: float, blue: float) -> None:
+        """Set white balance RGB gains (0.1 to 4.0 per channel)."""
+        self._white_balance = (
+            max(0.1, min(4.0, red)),
+            max(0.1, min(4.0, green)),
+            max(0.1, min(4.0, blue))
+        )
+
+    def _apply_white_balance(self, frame: np.ndarray) -> np.ndarray:
+        """Apply white balance gains to a BGR frame."""
+        if frame.ndim != 3 or frame.shape[2] != 3:
+            return frame
+        # BGR order: index 0=Blue, 1=Green, 2=Red
+        gains = np.array([self._white_balance[2], self._white_balance[1], self._white_balance[0]],
+                         dtype=np.float32).reshape(1, 1, 3)
+        float_data = frame.astype(np.float32) * gains
+        return np.clip(float_data, 0, 255).astype(np.uint8)

@@ -82,8 +82,7 @@ class ApplicationController:
             return False
 
         self.current_settings = self.camera.get_current_settings()
-        if self.current_settings.white_balance_rgb is None:
-            self.current_settings.white_balance_rgb = config.DEFAULT_WHITE_BALANCE
+        # white_balance_rgb always has a default value in CameraSettings dataclass
         self.white_balance.set_gains(*self.current_settings.white_balance_rgb)
 
         self.acquisition_thread = self._acquisition_thread_factory(self.camera)
