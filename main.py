@@ -6,12 +6,13 @@ import numpy as np
 
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget,
-    QHBoxLayout, QVBoxLayout, QPushButton, QLabel, QMessageBox, QTextEdit
+    QHBoxLayout, QVBoxLayout, QPushButton, QLabel, QMessageBox, QTextEdit,
+    QFileDialog, QGroupBox, QGridLayout, QDoubleSpinBox, QSpinBox
 )
 from PySide6.QtGui import QPixmap, QImage
 from PySide6.QtCore import Qt, QTimer
 from device_drivers.we_detection import check_plate_spots
-from PySide6.QtWidgets import QFileDialog
+from device_drivers.PI_Control_System.core.models import Axis
 
 PROJECT_ROOT = Path(__file__).parent
 if str(PROJECT_ROOT) not in sys.path:
@@ -85,6 +86,118 @@ class SimpleStageApp(QMainWindow):
         left_panel.addWidget(self.btn_plate)
         left_panel.addWidget(self.btn_adjust)
         left_panel.addWidget(self.btn_we)
+
+        # --- Camera Settings Panel ---
+        cam_group = QGroupBox("Camera Settings")
+        cam_layout = QGridLayout(cam_group)
+
+        cam_layout.addWidget(QLabel("Exposure (ms):"), 0, 0)
+        self.spin_exposure = QDoubleSpinBox()
+        self.spin_exposure.setRange(1.0, 5000.0)
+        self.spin_exposure.setValue(100.0)
+        self.spin_exposure.setSingleStep(10.0)
+        self.spin_exposure.setDecimals(1)
+        cam_layout.addWidget(self.spin_exposure, 0, 1)
+        self.btn_set_exposure = QPushButton("Set")
+        self.btn_set_exposure.clicked.connect(self.on_set_exposure)
+        cam_layout.addWidget(self.btn_set_exposure, 0, 2)
+
+        cam_layout.addWidget(QLabel("Gain:"), 1, 0)
+        self.spin_gain = QDoubleSpinBox()
+        self.spin_gain.setRange(0.0, 48.0)
+        self.spin_gain.setValue(0.0)
+        self.spin_gain.setSingleStep(1.0)
+        self.spin_gain.setDecimals(1)
+        cam_layout.addWidget(self.spin_gain, 1, 1)
+        self.btn_set_gain = QPushButton("Set")
+        self.btn_set_gain.clicked.connect(self.on_set_gain)
+        cam_layout.addWidget(self.btn_set_gain, 1, 2)
+
+        left_panel.addWidget(cam_group)
+
+        # --- Stage Control Panel ---
+        stage_group = QGroupBox("Stage Control")
+        stage_layout = QVBoxLayout(stage_group)
+
+        # Current position display
+        self.pos_label = QLabel("Position: X=?.?? Y=?.?? Z=?.??")
+        stage_layout.addWidget(self.pos_label)
+
+        # Step size control
+        step_layout = QHBoxLayout()
+        step_layout.addWidget(QLabel("Step (mm):"))
+        self.spin_step = QDoubleSpinBox()
+        self.spin_step.setRange(0.1, 50.0)
+        self.spin_step.setValue(5.0)
+        self.spin_step.setSingleStep(1.0)
+        self.spin_step.setDecimals(1)
+        step_layout.addWidget(self.spin_step)
+        self.btn_refresh_pos = QPushButton("Refresh")
+        self.btn_refresh_pos.clicked.connect(self.on_refresh_position)
+        step_layout.addWidget(self.btn_refresh_pos)
+        stage_layout.addLayout(step_layout)
+
+        # Jog buttons grid: X, Y, Z with +/-
+        jog_grid = QGridLayout()
+        jog_grid.addWidget(QLabel("X:"), 0, 0)
+        self.btn_x_minus = QPushButton("-")
+        self.btn_x_plus = QPushButton("+")
+        self.btn_x_minus.clicked.connect(lambda: self.on_jog_axis(Axis.X, -1))
+        self.btn_x_plus.clicked.connect(lambda: self.on_jog_axis(Axis.X, 1))
+        jog_grid.addWidget(self.btn_x_minus, 0, 1)
+        jog_grid.addWidget(self.btn_x_plus, 0, 2)
+
+        jog_grid.addWidget(QLabel("Y:"), 1, 0)
+        self.btn_y_minus = QPushButton("-")
+        self.btn_y_plus = QPushButton("+")
+        self.btn_y_minus.clicked.connect(lambda: self.on_jog_axis(Axis.Y, -1))
+        self.btn_y_plus.clicked.connect(lambda: self.on_jog_axis(Axis.Y, 1))
+        jog_grid.addWidget(self.btn_y_minus, 1, 1)
+        jog_grid.addWidget(self.btn_y_plus, 1, 2)
+
+        jog_grid.addWidget(QLabel("Z:"), 2, 0)
+        self.btn_z_minus = QPushButton("-")
+        self.btn_z_plus = QPushButton("+")
+        self.btn_z_minus.clicked.connect(lambda: self.on_jog_axis(Axis.Z, -1))
+        self.btn_z_plus.clicked.connect(lambda: self.on_jog_axis(Axis.Z, 1))
+        jog_grid.addWidget(self.btn_z_minus, 2, 1)
+        jog_grid.addWidget(self.btn_z_plus, 2, 2)
+
+        stage_layout.addLayout(jog_grid)
+
+        # Absolute position entry
+        abs_grid = QGridLayout()
+        abs_grid.addWidget(QLabel("Go to:"), 0, 0, 1, 3)
+
+        abs_grid.addWidget(QLabel("X:"), 1, 0)
+        self.spin_goto_x = QDoubleSpinBox()
+        self.spin_goto_x.setRange(0.0, 300.0)
+        self.spin_goto_x.setValue(200.0)
+        self.spin_goto_x.setDecimals(2)
+        abs_grid.addWidget(self.spin_goto_x, 1, 1, 1, 2)
+
+        abs_grid.addWidget(QLabel("Y:"), 2, 0)
+        self.spin_goto_y = QDoubleSpinBox()
+        self.spin_goto_y.setRange(0.0, 300.0)
+        self.spin_goto_y.setValue(200.0)
+        self.spin_goto_y.setDecimals(2)
+        abs_grid.addWidget(self.spin_goto_y, 2, 1, 1, 2)
+
+        abs_grid.addWidget(QLabel("Z:"), 3, 0)
+        self.spin_goto_z = QDoubleSpinBox()
+        self.spin_goto_z.setRange(0.0, 300.0)
+        self.spin_goto_z.setValue(200.0)
+        self.spin_goto_z.setDecimals(2)
+        abs_grid.addWidget(self.spin_goto_z, 3, 1, 1, 2)
+
+        self.btn_goto = QPushButton("Go to Position")
+        self.btn_goto.clicked.connect(self.on_goto_position)
+        abs_grid.addWidget(self.btn_goto, 4, 0, 1, 3)
+
+        stage_layout.addLayout(abs_grid)
+
+        left_panel.addWidget(stage_group)
+
         left_panel.addStretch()
 
         # RIGHT: image display
@@ -335,6 +448,75 @@ class SimpleStageApp(QMainWindow):
             self.log(f"WE detection error: {e}", "error")
             QMessageBox.critical(self, "WE Detection error", str(e))
 
+
+    # ---------- camera settings handlers ----------
+
+    def on_set_exposure(self):
+        """Set camera exposure from spinbox value (ms -> seconds)."""
+        try:
+            if not self.camera.is_connected:
+                self.log("Camera not connected", "warn")
+                return
+            exposure_ms = self.spin_exposure.value()
+            exposure_sec = exposure_ms / 1000.0
+            self.camera.set_exposure(exposure_sec)
+            self.log(f"Exposure set to {exposure_ms:.1f} ms", "info")
+        except Exception as e:
+            self.log(f"Set exposure error: {e}", "error")
+
+    def on_set_gain(self):
+        """Set camera gain from spinbox value."""
+        try:
+            if not self.camera.is_connected:
+                self.log("Camera not connected", "warn")
+                return
+            gain = self.spin_gain.value()
+            self.camera.set_gain(gain)
+            self.log(f"Gain set to {gain:.1f}", "info")
+        except Exception as e:
+            self.log(f"Set gain error: {e}", "error")
+
+    # ---------- stage control handlers ----------
+
+    def on_refresh_position(self):
+        """Refresh and display current stage position."""
+        try:
+            pos = self.motion_service.get_current_position()
+            self.pos_label.setText(f"Position: X={pos.x:.2f} Y={pos.y:.2f} Z={pos.z:.2f}")
+            # Also update the goto spinboxes to current position
+            self.spin_goto_x.setValue(pos.x)
+            self.spin_goto_y.setValue(pos.y)
+            self.spin_goto_z.setValue(pos.z)
+            self.log(f"Position: X={pos.x:.2f} Y={pos.y:.2f} Z={pos.z:.2f}", "info")
+        except Exception as e:
+            self.log(f"Get position error: {e}", "error")
+
+    def on_jog_axis(self, axis: Axis, direction: int):
+        """Jog a single axis by step size in given direction (+1 or -1)."""
+        try:
+            step = self.spin_step.value() * direction
+            self.log(f"Jogging {axis.value} by {step:+.1f} mm...", "info")
+            future = self.motion_service.move_axis_relative(axis, step)
+            future.result(timeout=30)
+            self.on_refresh_position()
+        except Exception as e:
+            self.log(f"Jog {axis.value} error: {e}", "error")
+
+    def on_goto_position(self):
+        """Move stage to absolute position from spinbox values."""
+        try:
+            target = Position(
+                x=self.spin_goto_x.value(),
+                y=self.spin_goto_y.value(),
+                z=self.spin_goto_z.value()
+            )
+            self.log(f"Moving to X={target.x:.2f} Y={target.y:.2f} Z={target.z:.2f}...", "info")
+            future = self.motion_service.move_to_position_safe_z(target)
+            future.result(timeout=60)
+            self.on_refresh_position()
+            self.log("Move complete.", "info")
+        except Exception as e:
+            self.log(f"Go to position error: {e}", "error")
 
     # ---------- live view helper ----------
 

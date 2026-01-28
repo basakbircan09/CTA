@@ -126,3 +126,32 @@ class ThorlabsCamera:
         frame_bgr = self.grab_frame()
         cv2.imwrite(path, frame_bgr)
         return frame_bgr
+
+    # ---------- Camera Settings ----------
+
+    def get_exposure(self) -> float:
+        """Get current exposure time in seconds."""
+        if not self._connected or self._cam is None:
+            raise RuntimeError("Camera not connected")
+        return self._cam.get_exposure()
+
+    def set_exposure(self, exposure_sec: float) -> None:
+        """Set exposure time in seconds."""
+        if not self._connected or self._cam is None:
+            raise RuntimeError("Camera not connected")
+        self._cam.set_exposure(exposure_sec)
+
+    def get_gain(self) -> float:
+        """Get current gain value."""
+        if not self._connected or self._cam is None:
+            raise RuntimeError("Camera not connected")
+        if hasattr(self._cam, "get_gain"):
+            return self._cam.get_gain()
+        return 0.0
+
+    def set_gain(self, gain: float) -> None:
+        """Set gain value."""
+        if not self._connected or self._cam is None:
+            raise RuntimeError("Camera not connected")
+        if hasattr(self._cam, "set_gain"):
+            self._cam.set_gain(gain)
