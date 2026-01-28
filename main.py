@@ -162,7 +162,7 @@ class SimpleStageApp(QMainWindow):
         """3- Camera Start: toggle live view."""
         if not self.live_running:
             try:
-                if not self.camera._connected:
+                if not self.camera.is_connected:
                     self.camera.connect()
                 self.live_timer.start(100)  # ~10 fps
                 self.live_running = True
@@ -179,7 +179,7 @@ class SimpleStageApp(QMainWindow):
     def on_capture_clicked(self):
         """4- Take a Picture: capture one frame and show it."""
         try:
-            if not self.camera._connected:
+            if not self.camera.is_connected:
                 self.camera.connect()
 
             save_dir = PROJECT_ROOT / "artifacts" / "captures"
@@ -248,7 +248,7 @@ class SimpleStageApp(QMainWindow):
         """6- Auto Adjust Stage: loop capture + detect + move."""
         try:
             # Ensure camera is connected
-            if not self.camera._connected:
+            if not self.camera.is_connected:
                 self.camera.connect()
 
             save_dir = PROJECT_ROOT / "artifacts" / "auto_adjust"

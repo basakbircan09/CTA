@@ -8,7 +8,10 @@ from dataclasses import dataclass
 from enum import Enum, auto
 from typing import Callable, Any
 from threading import Lock
+import logging
 import uuid
+
+logger = logging.getLogger(__name__)
 
 
 class EventType(Enum):
@@ -139,9 +142,9 @@ class EventBus:
         for token in tokens:
             try:
                 token.callback(event)
-            except Exception as e:
-                # Log error but don't break other subscribers
-                print(f"Error in event callback for {event.event_type}: {e}")
+            except Exception:
+                # Log error with full stack trace but don't break other subscribers
+                logger.exception(f"Error in event callback for {event.event_type}")
 
     def clear_all(self) -> None:
         """Remove all subscriptions.

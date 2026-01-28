@@ -23,6 +23,11 @@ class ThorlabsCamera:
         self._cam = None
         self._connected = False
 
+    @property
+    def is_connected(self) -> bool:
+        """Return whether the camera is connected."""
+        return self._connected
+
     def connect(self):
         if self._connected:
             return

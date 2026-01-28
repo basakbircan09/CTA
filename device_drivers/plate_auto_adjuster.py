@@ -7,7 +7,7 @@ from typing import Tuple, List
 
 from device_drivers.plate_finder import gray_plate_on_red
 from device_drivers.thorlabs_camera_wrapper import ThorlabsCamera
-from device_drivers.PI_Control_System.core.models import Axis, Position
+from device_drivers.PI_Control_System.core.models import Axis
 from device_drivers.PI_Control_System.services.motion_service import MotionService
 
 
@@ -26,6 +26,7 @@ def auto_adjust_plate(
     """
     log: List[str] = []
     save_dir.mkdir(parents=True, exist_ok=True)
+    hint = "unknown"  # Initialize before loop to prevent UnboundLocalError
 
     for i in range(1, max_iterations + 1):
         img_path = save_dir / f"auto_adjust_{i}.png"
@@ -65,17 +66,11 @@ def auto_adjust_plate(
             return False, hint, log
 
         # 4) execute move: relative move in X/Y, keep Z unchanged
-        rel_pos = Position(x=dx, y=dy, z=0.0)
-        fut = motion_service.move_to_position(
-            # Use current position + relative? MotionService currently does absolute moves,
-            # so instead use per-axis relative moves:
-            # Here we just call move_axis_relative for X and Y.
-            position=None  # placeholder; we'll not use this route
-        )
-        # BUT MotionService already has move_axis_relative, so better:
-        motion_service.move_axis_relative(Axis.X, dx)
-        motion_service.move_axis_relative(Axis.Y, dy)
-        # Wait is handled by those calls internally via executor.
+        future_x = motion_service.move_axis_relative(Axis.X, dx)
+        future_y = motion_service.move_axis_relative(Axis.Y, dy)
+        # Wait for both moves to complete before next capture
+        future_x.result(timeout=30)
+        future_y.result(timeout=30)
 
         log.append(f"[iter {i}] Requested stage move: ΔX={dx} mm, ΔY={dy} mm")
 

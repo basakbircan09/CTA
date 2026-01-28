@@ -153,7 +153,7 @@ class PIControllerManager(AxisControllerManager):
             # Set all axes to max velocity for parking
             print("  - Setting max velocity for all axes...")
             for controller in self._controllers.values():
-                controller.set_velocity(controller._config.max_velocity)
+                controller.set_velocity(controller.config.max_velocity)
 
             # Step 1: Park Z first (safety)
             print("  - Moving Z-axis to park position...")
