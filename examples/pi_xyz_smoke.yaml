@@ -1,0 +1,52 @@
+name: "PI_XYZ Hardware Smoke"
+description: "Connect, reference, and verify small motion on Z"
+version: "0.1.0"
+
+steps:
+  - id: "pi_connect"
+    device: "pi_xyz"
+    action: "connect"
+    timeout_s: 30
+
+  - id: "pi_home_all"
+    device: "pi_xyz"
+    action: "home_all"
+    depends_on: ["pi_connect"]
+    timeout_s: 180
+
+  - id: "pi_pos_baseline"
+    device: "pi_xyz"
+    action: "get_position"
+    depends_on: ["pi_home_all"]
+    timeout_s: 15
+
+  - id: "pi_move_z_up"
+    device: "pi_xyz"
+    action: "move_relative"
+    depends_on: ["pi_pos_baseline"]
+    timeout_s: 60
+    params:
+      axis: "Z"
+      delta_mm: 1.0
+
+  - id: "pi_pos_after_up"
+    device: "pi_xyz"
+    action: "get_position"
+    depends_on: ["pi_move_z_up"]
+    timeout_s: 15
+
+  - id: "pi_move_z_down"
+    device: "pi_xyz"
+    action: "move_relative"
+    depends_on: ["pi_pos_after_up"]
+    timeout_s: 60
+    params:
+      axis: "Z"
+      delta_mm: -1.0
+
+  - id: "pi_pos_final"
+    device: "pi_xyz"
+    action: "get_position"
+    depends_on: ["pi_move_z_down"]
+    timeout_s: 15
+

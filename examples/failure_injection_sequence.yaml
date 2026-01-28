@@ -1,0 +1,27 @@
+name: "Failure Injection Test"
+description: "Sequence with forced timeout to test error handling"
+version: "0.1.0"
+timeout_s: 300
+retry_policy:
+  max_attempts: 2
+  backoff_s: [2, 5]
+
+steps:
+  - id: "step1_ping"
+    device: "gamry"
+    action: "ping"
+    timeout_s: 5
+    dry_run_duration_s: 0.5
+
+  - id: "step2_timeout"
+    device: "pi_xyz"
+    action: "status"
+    timeout_s: 1  # Very short timeout to force failure in dry-run
+    dry_run_duration_s: 5.0  # Long duration exceeds timeout
+
+  - id: "step3_should_skip"
+    device: "thorlabs"
+    action: "ping"
+    depends_on: ["step2_timeout"]
+    timeout_s: 5
+    dry_run_duration_s: 0.5

@@ -1,0 +1,84 @@
+# Phase 6 Full System Test - Hardware Mode
+# End-to-end sequence coordinating all three device_drivers: PI_XYZ → Thorlabs → Gamry
+# NO dry_run_duration_s fields - forces real hardware execution
+
+name: "Full System Test (Hardware)"
+description: "Canonical end-to-end run: PI_XYZ move → Thorlabs snapshot → Gamry short CV"
+version: "0.1.0"
+timeout_s: 1800
+
+retry_policy:
+  max_attempts: 2
+  backoff_s: [10, 20]
+
+steps:
+  # ========== Phase 1: PI_XYZ Initialization ==========
+  - id: "pi_connect"
+    device: "pi_xyz"
+    action: "connect"
+    timeout_s: 30
+
+  - id: "pi_home_all"
+    device: "pi_xyz"
+    action: "home_all"
+    depends_on: ["pi_connect"]
+    timeout_s: 180
+
+  - id: "pi_pos_baseline"
+    device: "pi_xyz"
+    action: "get_position"
+    depends_on: ["pi_home_all"]
+    timeout_s: 15
+
+  # ========== Phase 2: Thorlabs Snapshot ==========
+  - id: "tl_status"
+    device: "thorlabs"
+    action: "status"
+    depends_on: ["pi_pos_baseline"]
+    timeout_s: 10
+
+  - id: "tl_set_exposure"
+    device: "thorlabs"
+    action: "set_exposure"
+    depends_on: ["tl_status"]
+    params:
+      exposure_ms: 50
+    timeout_s: 5
+
+  - id: "tl_snapshot"
+    device: "thorlabs"
+    action: "snapshot"
+    depends_on: ["tl_set_exposure"]
+    timeout_s: 15
+
+  # ========== Phase 3: Gamry CV Run ==========
+  - id: "gamry_status_pre"
+    device: "gamry"
+    action: "status"
+    depends_on: ["tl_snapshot"]
+    timeout_s: 20
+
+  - id: "gamry_run_cv"
+    device: "gamry"
+    action: "run_cv"
+    depends_on: ["gamry_status_pre"]
+    timeout_s: 600
+    params:
+      session_id: "FULL_SYSTEM_001"
+      v_start: 0.0
+      v_vertex: 1.5
+      scan_rate: 0.1
+      cycles: 3
+
+  - id: "gamry_status_post"
+    device: "gamry"
+    action: "status"
+    depends_on: ["gamry_run_cv"]
+    timeout_s: 20
+
+  # ========== Phase 4: Final Verification ==========
+  - id: "pi_pos_final"
+    device: "pi_xyz"
+    action: "get_position"
+    depends_on: ["gamry_status_post"]
+    timeout_s: 15

@@ -1,0 +1,99 @@
+# Gamry Hardware Smoke Test
+# Validates all 5 techniques (CV, CA, CP, OCV, EIS) on dummy cell
+#
+# SAFETY: Only run with dummy cell connected. Cannot abort once started.
+#
+# Prerequisites:
+# - Gamry potentiostat connected to dummy cell (WE/CE/RE)
+# - Gamry wrapper running in hardware mode (no --mock flag)
+# - DESCRIBE_SUPPORTED['gamry'] = True in action_mapper.py
+# - GOED supervisor has Gamry device started and READY
+#
+# Run with:
+#   .venv/Scripts/python src/run_cli.py run --plan examples/gamry_hardware_smoke.yaml
+#
+# Expected duration: ~60 seconds (CV 10s + CA 5s + CP 5s + OCV 10s + EIS 30s)
+
+name: "Gamry_Hardware_Smoke"
+description: "Automated smoke test for all Gamry techniques on dummy cell"
+version: "1.0.0"
+
+steps:
+  # Step 1: Minimal CV (3 cycles, 0.5 V swing, slow scan)
+  - id: "cv_smoke"
+    device: "gamry"
+    action: "run_cv"
+    timeout_s: 90
+    params:
+      session_id: "smoke_cv"
+      v_start: 0.0        # V (vs RE)
+      v_vertex: 1.5       # V (small range for safety)
+      scan_rate: 0.2      # V/s (slow for monitoring)
+      cycles: 3           # Three short cycles (~15s total)
+      # output_dir handled by runner
+
+  # Step 2: Short CA (constant voltage)
+  - id: "ca_smoke"
+    device: "gamry"
+    action: "run_ca"
+    timeout_s: 20
+    params:
+      session_id: "smoke_ca"
+      duration_s: 10.0     # Short duration
+      setpoint: 0.5       # V (moderate potential)
+
+  # Step 3: Short CP (constant current)
+  - id: "cp_smoke"
+    device: "gamry"
+    action: "run_cp"
+    timeout_s: 20
+    params:
+      session_id: "smoke_cp"
+      duration_s: 10.0     # Short duration
+      setpoint: 1.0e-6    # A (1 µA, safe for dummy cell)
+
+  # Step 4: OCV measurement
+  - id: "ocv_smoke"
+    device: "gamry"
+    action: "run_ocv"
+    timeout_s: 25
+    params:
+      session_id: "smoke_ocv"
+      duration_s: 10.0    # 10 second measurement
+      sample_period_s: 0.1  # 10 Hz sampling
+
+  # Step 5: Fast EIS (reduced frequency range)
+  - id: "eis_smoke"
+    device: "gamry"
+    action: "run_eis"
+    timeout_s: 60
+    params:
+      session_id: "smoke_eis"
+      dc_voltage: 0.0         # V (no DC bias)
+      ac_amplitude: 0.01      # V (10 mV perturbation)
+      freq_start: 10000.0     # Hz (10 kHz, reduced from 100 kHz)
+      freq_end: 1.0           # Hz
+      points_per_decade: 5    # Reduced from 10 for faster test
+      # Note: Full EIS (100kHz to 0.1Hz, 10 pts/decade) would take ~5 minutes
+
+# Post-Validation Checks:
+# 1. All steps should complete with ok=true in manifest
+# 2. Each step should produce artifact CSV files with real data
+# 3. Wrapper logs should show clean cell state transitions (ON → OFF)
+# 4. No timeouts or hardware errors
+# 5. Total duration should be < 90 seconds
+#
+# Artifact locations:
+#   runs/Gamry_Hardware_Smoke_[timestamp]/
+#     ├── manifest.json
+#     ├── smoke_cv/
+#     │   ├── smoke_cv_Cyc0001.csv  (or similar naming)
+#     │   └── manifest.json
+#     ├── smoke_ca/
+#     │   └── [CA data files]
+#     ├── smoke_cp/
+#     │   └── [CP data files]
+#     ├── smoke_ocv/
+#     │   └── [OCV data files]
+#     └── smoke_eis/
+#         └── [EIS data files]

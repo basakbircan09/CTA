@@ -1,0 +1,57 @@
+name: "Basic Test Sequence"
+description: "Simple 3-step sequence for testing mock device_drivers"
+version: "0.1.0"
+timeout_s: 600
+retry_policy:
+  max_attempts: 2
+  backoff_s: [5, 10]
+
+steps:
+  # Step 1: Ping all device_drivers
+  - id: "ping_gamry"
+    device: "gamry"
+    action: "ping"
+    timeout_s: 5
+    dry_run_duration_s: 0.5
+
+  - id: "ping_pi_xyz"
+    device: "pi_xyz"
+    action: "ping"
+    timeout_s: 5
+    dry_run_duration_s: 0.5
+
+  - id: "ping_thorlabs"
+    device: "thorlabs"
+    action: "ping"
+    timeout_s: 5
+    dry_run_duration_s: 0.5
+
+  # Step 2: Status checks (depends on pings)
+  - id: "status_gamry"
+    device: "gamry"
+    action: "status"
+    depends_on: ["ping_gamry"]
+    timeout_s: 10
+    dry_run_duration_s: 1.0
+
+  - id: "status_pi_xyz"
+    device: "pi_xyz"
+    action: "status"
+    depends_on: ["ping_pi_xyz"]
+    timeout_s: 10
+    dry_run_duration_s: 1.0
+
+  - id: "status_thorlabs"
+    device: "thorlabs"
+    action: "status"
+    depends_on: ["ping_thorlabs"]
+    timeout_s: 10
+    dry_run_duration_s: 1.0
+
+  # Step 3: Final check (depends on all status checks)
+  - id: "final_check"
+    device: "gamry"
+    action: "ping"
+    depends_on: ["status_gamry", "status_pi_xyz", "status_thorlabs"]
+    timeout_s: 5
+    dry_run_duration_s: 0.5

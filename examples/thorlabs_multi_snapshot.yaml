@@ -1,0 +1,38 @@
+# Thorlabs Multi-Snapshot Test
+# Tests multiple snapshots with different exposures
+
+name: "Thorlabs Multi-Snapshot"
+description: "Capture multiple snapshots with different settings"
+version: "1.0"
+
+steps:
+  - id: "snap1-exp30"
+    device: "thorlabs"
+    action: "set_exposure"
+    params:
+      exposure_ms: 30
+    timeout_s: 5
+
+  - id: "snap1-capture"
+    device: "thorlabs"
+    action: "snapshot"
+    params:
+      output_path: "snapshot_30ms.png"
+    timeout_s: 15
+    depends_on: ["snap1-exp30"]
+
+  - id: "snap2-exp50"
+    device: "thorlabs"
+    action: "set_exposure"
+    params:
+      exposure_ms: 50
+    timeout_s: 5
+    depends_on: ["snap1-capture"]
+
+  - id: "snap2-capture"
+    device: "thorlabs"
+    action: "snapshot"
+    params:
+      output_path: "snapshot_50ms.png"
+    timeout_s: 15
+    depends_on: ["snap2-exp50"]

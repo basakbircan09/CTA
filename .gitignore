@@ -1,0 +1,14 @@
+# Ignore Python virtual environments
+.venv/
+venv/
+
+# Ignore PyCharm project files
+.idea/
+
+# Ignore system files
+__pycache__/
+*.pyc
+
+# Ignore data/output
+data/
+*.log

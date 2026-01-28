@@ -1,0 +1,28 @@
+name: "Gamry CV Smoke Test"
+description: "Short CV to validate hardware + data path"
+version: "0.1.0"
+
+steps:
+  - id: "gamry_status_pre"
+    device: "gamry"
+    action: "status"
+    timeout_s: 20
+
+  - id: "gamry_run_cv"
+    device: "gamry"
+    action: "run_cv"
+    depends_on: ["gamry_status_pre"]
+    timeout_s: 600
+    params:
+      session_id: "CV_SMOKE_001"
+      v_start: 0.0
+      v_vertex: 1.5
+      scan_rate: 0.1
+      cycles: 3
+      output_dir: "runs/CV_SMOKE_001"
+
+  - id: "gamry_status_post"
+    device: "gamry"
+    action: "status"
+    depends_on: ["gamry_run_cv"]
+    timeout_s: 20

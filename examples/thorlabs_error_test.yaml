@@ -1,0 +1,14 @@
+# Thorlabs Error Test - Unwritable Path
+# Tests error handling with invalid output path
+
+name: "Thorlabs Error Test"
+description: "Test error handling with unwritable path"
+version: "1.0"
+
+steps:
+  - id: "tl-snapshot-bad"
+    device: "thorlabs"
+    action: "snapshot"
+    params:
+      output_path: "Z:/nonexistent/readonly/bad.png"  # Invalid path
+    timeout_s: 15

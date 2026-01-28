@@ -1,0 +1,18 @@
+name: "PI XYZ Connect + Home"
+description: "Connects the PI stage and homes all axes."
+version: "0.1.0"
+timeout_s: 600
+
+steps:
+  - id: "connect_pi"
+    device: "pi_xyz"
+    action: "connect"
+    timeout_s: 120
+    dry_run_duration_s: 1.0
+
+  - id: "home_pi"
+    device: "pi_xyz"
+    action: "home_all"
+    depends_on: ["connect_pi"]
+    timeout_s: 300
+    dry_run_duration_s: 5.0
