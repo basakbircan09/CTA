@@ -11,7 +11,6 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtGui import QPixmap, QImage
 from PySide6.QtCore import Qt, QTimer
-from device_drivers.we_detection import check_plate_spots
 from device_drivers.PI_Control_System.core.models import Axis
 
 PROJECT_ROOT = Path(__file__).parent
@@ -20,9 +19,9 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from device_drivers.PI_Control_System.app_factory import create_services
 from device_drivers.PI_Control_System.core.models import Position
-from device_drivers.plate_finder import gray_plate_on_red
 from device_drivers.thorlabs_camera_wrapper import ThorlabsCamera
 from device_drivers.plate_auto_adjuster import auto_adjust_plate
+from device_drivers.GPT_Merge import analyze_plate_and_spots
 
 class SimpleStageApp(QMainWindow):
     def __init__(self, use_mock: bool = True):
@@ -365,30 +364,35 @@ class SimpleStageApp(QMainWindow):
             self.log(f"Using user-selected image: {image_path}", "info")
 
         try:
-            result = gray_plate_on_red(image_path, margin_frac=0.02, debug=False)
-            bbox = result["rect_bbox"]
-            output_img = result["output_display"]
-            fully = result["fully_in_frame"]
-            hint = result["move_hint"]
-            save_path = result["save_path"]
+            save_dir = PROJECT_ROOT / "artifacts" / "plate_detection"
+            result = analyze_plate_and_spots(image_path, str(save_dir))
 
+            if result["error"]:
+                msg = f"Detection error: {result['error']}"
+                self.log(msg, "warn")
+                QMessageBox.warning(self, "Plate detection", msg)
+                return
+
+            output_img = result["all_spots_image"]
             if output_img is not None:
                 pix = self.cv_to_qpixmap(output_img)
                 self.image_label.setPixmap(pix)
 
-            if not bbox:
-                msg = f"No plate detected. hint={hint}, saved={save_path}"
+            bbox = result["plate_bbox"]
+            total_spots = len(result["all_spots"])
+            accepted = len(result["accepted_spots"])
+            rejected = len(result["rejected_spots"])
+
+            if not result["plate_detected"]:
+                msg = "No plate detected in image."
                 self.log(msg, "warn")
                 QMessageBox.warning(self, "Plate detection", msg)
             else:
-                if fully:
-                    msg = f"Plate fully in frame (Yes). hint={hint}, saved={save_path}"
-                    self.log(msg, "info")
-                    QMessageBox.information(self, "Plate detection", msg)
-                else:
-                    msg = f"Plate NOT fully in frame (No). hint={hint}, saved={save_path}"
-                    self.log(msg, "warn")
-                    QMessageBox.warning(self, "Plate detection", msg)
+                msg = (f"Plate detected at {bbox}\n"
+                       f"Total spots: {total_spots}\n"
+                       f"Accepted: {accepted}, Rejected: {rejected}")
+                self.log(msg, "info")
+                QMessageBox.information(self, "Plate detection", msg)
         except Exception as e:
             self.log(f"Plate detection error: {e}", "error")
             QMessageBox.critical(self, "Plate detection error", str(e))
@@ -449,33 +453,40 @@ class SimpleStageApp(QMainWindow):
 
         try:
             save_dir = PROJECT_ROOT / "artifacts" / "we_detection"
-            save_dir.mkdir(parents=True, exist_ok=True)
-            save_path = save_dir / "we_checked.png"
+            result = analyze_plate_and_spots(image_path, str(save_dir))
 
-            result = check_plate_spots(
-                image_path=image_path,
-                save_path=str(save_path),
-                display_result=False
-            )
+            if result["error"]:
+                msg = f"Detection error: {result['error']}"
+                self.log(msg, "warn")
+                QMessageBox.warning(self, "WE Detection", msg)
+                return
 
-            output_img = result["output_image"]
-            perfect = result["perfect_circle_count"]
-            defective = result["defective_count"]
-
+            # Show accepted spots image (spots without defects)
+            output_img = result["accepted_spots_image"]
             if output_img is not None:
                 pix = self.cv_to_qpixmap(output_img)
                 self.image_label.setPixmap(pix)
 
+            accepted = len(result["accepted_spots"])
+            rejected = len(result["rejected_spots"])
+            total = len(result["all_spots"])
+
+            # List rejected spot labels
+            rejected_labels = [s.get("label", "?") for s in result["rejected_spots"]]
+
             msg = (
-                f"WE detection:\n"
-                f"  perfect circles: {perfect}\n"
-                f"  defective spots: {defective}\n"
-                f"  saved: {save_path}"
+                f"WE Detection Results:\n"
+                f"  Total spots: {total}\n"
+                f"  Accepted (no defects): {accepted}\n"
+                f"  Rejected (bubbles/holes): {rejected}\n"
             )
-            level = "info" if defective == 0 else "warn"
+            if rejected_labels:
+                msg += f"  Defective spots: {', '.join(rejected_labels)}"
+
+            level = "info" if rejected == 0 else "warn"
             self.log(msg, level)
 
-            if defective == 0:
+            if rejected == 0:
                 QMessageBox.information(self, "WE Detection", msg)
             else:
                 QMessageBox.warning(self, "WE Detection", msg)
