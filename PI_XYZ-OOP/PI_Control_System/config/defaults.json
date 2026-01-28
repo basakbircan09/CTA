@@ -1,0 +1,44 @@
+{
+  "controllers": {
+    "X": {
+      "port": "COM5",
+      "baud": 115200,
+      "stage": "62309260",
+      "refmode": "FPL",
+      "serialnum": "025550131"
+    },
+    "Y": {
+      "port": "COM3",
+      "baud": 115200,
+      "stage": "62309260",
+      "refmode": "FPL",
+      "serialnum": "025550143"
+    },
+    "Z": {
+      "port": "COM4",
+      "baud": 115200,
+      "stage": "62309260",
+      "refmode": "FPL",
+      "serialnum": "025550149"
+    }
+  },
+  "reference_order": ["Z", "X", "Y"],
+  "travel_ranges": {
+    "X": {"min": 5.0, "max": 200.0},
+    "Y": {"min": 0.0, "max": 200.0},
+    "Z": {"min": 15.0, "max": 200.0}
+  },
+  "motion": {
+    "default_velocity": 10.0,
+    "max_velocity": 20.0,
+    "park_position": 200.0
+  },
+  "gui": {
+    "position_update_interval": 100,
+    "default_step_size": 1.0
+  },
+  "default_waypoints": [
+    {"X": 10.0, "Y": 5.0, "Z": 20.0, "holdTime": 1.0},
+    {"X": 25.0, "Y": 15.0, "Z": 30.0, "holdTime": 2.0}
+  ]
+}

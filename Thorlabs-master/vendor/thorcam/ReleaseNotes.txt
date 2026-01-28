@@ -1,0 +1,201 @@
+ThorCam Release Notes
+
+KNOWN ISSUES/BUGS
+- Black-level adjustments do not function with certain DCx camera models.
+- There is a 4GB file size limit for AVI files from DCx cameras.
+- Scientific CCD cameras (340, 1500, 1501, 4070, 8050, 8051) with an ROI width that is an odd number may exhibit color artifacts on some CPUs.
+
+
+VERSION HISTORY
+
+3.7.0 (2022-05-01)
+ - Improvements to camera SDK. Can now recover from USB-bus stalls. Slight improvement to frame rates at short exposures.
+ - Fixed visual Histogram issue where Red and Blue curves could be swapped, custom colors have been removed. 
+ - Limited invalid Hardware Trigger and Frame Rate Control combinations.
+ - Fixed the path preview for Times Series recording.
+ - Installer now shows Thorlabs Imaging Systems instead of Thorlabs Scientific Imaging.
+ - Fixed Display Settings bug in which the "Use ROI" check box did not work in combination with the "Continuous Auto Scale" check box.
+ - Changed from "Scientific Imaging" to "Imaging Systems" in the installer text and graphics.
+ - Various bug fixes.
+
+3.6.2 (2022-02-25)
+ - Fixed an issue where fully dark images could produce errors during contrast stretching
+ - Fixed an issue where the least significant bits of Zelux image data were corrupted
+
+3.6.1 (2021-12-08)
+ - Fixed an issue where 16-bit TIFF recordings were saved as 8-bit
+ - Fixed an issue where cooling status was not displayed properly (for cameras with cooling components)
+ - Fixed an issue where Timed Series recordings were not saved at the proper bit depth
+ - Updated Thorcam manual
+
+3.6.0 (2021-08-05)
+ - Added autoexposure check box.
+ - Changed default path for saved settings from C:\ProgramData\Thorlabs\ThorCam to Documents
+ - Added alert if a cooled camera's cooler power supply is unplugged.
+ - Replace 16-bit-TIFF-writing engine.
+ - Annotations now draw as smooth lines regardless of zoom level.
+ - Analysis regions now show the rectangle pixel location and dimensions.
+ - Quick-Save and Camera-Overlay settings are now retained.
+ - Now based on camera SDK 2.0.
+ - Various bug fixes.
+
+3.5.1 (2020-09-04)
+ - Fixed an error message about an unsupported taps parameter on 1500/1501 CCD scientific cameras.
+ - Fixed an issue where CS505MUP could not be opened due to a missing parameter error.
+
+3.5.0 (2020-09-01)
+ - Installer is now signed to avoid a security warning on some systems.
+ - Split camera-settings into multiple tabs.
+ - Added slider controls for exposure time, gain, and black level.
+ - With updated Zelux-camera firmware, frame-rate control can now be adjusted while the camera is running.
+ - Added clarifying warning when Zelux exposure is longer than the requested frame rate.
+ - Fixed missing files with the 32-bit ThorCam installer.
+ - Fixed bug where saving 16-bit LZW images with DCx camera would not be compressed in some operation modes.
+ - Fixed bug where CS2100 cameras did not correctly record readout mode during Save Settings.
+ - Fixed 16-bit lzw-tiff-writing bug that led to the user interface becoming unresponsive.
+ - Color balance is now adjusted to account for black level when using the sRGB and Linear RGB image types.
+ - Various bug fixes.
+
+3.4.1 (2020-06-05)
+ - Improved performance when changing exposure and gain while the camera is running.
+ - Fixed bug that affected only scientific CCD cameras in which gain incremented by 0.1 instead of by 1.
+ - Minor bug fixes related to writing Tiff and Avi movie files.
+ - Polarization-camera models will now perform better on processors supporting avx2 instructions.
+ 
+3.4.0 (2020-03-27)
+ - Added support for CS135 and Zelux cameras.
+ - Added ability to save and load camera settings with JSON file format.
+ - Improved tiff-writing performance, especially with a small region of interest (ROI).
+ - Added custom tif tag for frame number.
+ - Added custom tif tag for the elapsed time (in nanoseconds) since the camera was plugged in.
+ - Added frame-rate-control feature (Zelux cameras).
+ - Fixed a bug with IDS exposure range not updating until capture.
+
+3.3.1 (2019-07-03)
+ - Minor polarization optimizations.
+ 
+3.3.0 (2019-05-28)
+ - Added support for the CS505MUP Polarized camera, including support for new image types associated with polarization.
+ - Expanded the number of pseudocolor options in the display settings.
+ - New feature allows users to create their own LUTs for custom pseudocolor options.
+ - Users can now change Image Types while capturing for Color and Polarized cameras.
+ - Fixed an issue where horizontal and vertical flipping produced unflipped frames when continuous autoscale was also active.
+ - Various bug fixes.
+
+3.2.1 (2019-02-08)
+ - Histogram now updates immediately when drawing a new region of interest (ROI) on a snapshot.
+ - Fixed saving 8-bit tiff formats where compressed saved as uncompressed and uncompressed saved as compressed.
+ - The USB-data-rate test tool is now a modal window, preventing access to the open settings window.
+ - Fixed bug where USB-data-rate test tool did not properly update the settings window when applying the performance results.
+ - Fixed coloration-artifacts bug with ROI widths that are odd numbers on CCD scientific cameras.
+ - Fixed bug where serial numbers for some USB cameras appeared truncated.
+ - Fixed bug where on some computers, USB scientific cameras caused ThorCam to crash upon startup.
+ - Log files are now written to user-local storage instead of C:\ProgramData to avoid security conflicts between multiple users.
+ - Fixed bug where, in some cases, the main window opened behind other windows (Windows 10 only).
+ - Fixed continuous-white-balance bug.
+ - Updated camera link driver to fix corrupted frame issues on Windows 10
+
+3.2 (2018-10-11)
+ - Support for the Sony 9 compact scientific cameras (both monochrome and color versions).
+ - Added option to disable camera live view during recordings.
+ - Changed Hot Pixel Correction threshold up/down arrows increment in increments of 0.1 instead of 1.0
+ - Various bug fixes.
+
+3.1.1 (2018-08-17)
+ - Fixed bug for color cameras where white balancing did not work in the LinearRGB color space.
+ - Fixed bug where the checkbox to disable the camera's LED indicator was hidden.
+
+3.1.0 (2018-06-29)
+ - Support for the Sony 5 compact scientific cameras (both monochrome and color versions).
+ - New C camera interface for compact-scientific cameras.
+ - New C demosaicking and color-processing interfaces for all cameras.
+ - Various bug fixes.
+ KNOWN ISSUES:
+ - LabVIEW applications that use the .NET camera interface will now need to cast IImageData to IImageDataUShort1D in order to access the data.
+ - If programming to the C camera interface, arming the camera while specifying a large number of frames for burst-mode operation may cause a crash. 300 frames is a safe number, but 600 is known to crash.
+
+3.0.0 (2017-09-22)
+ - Updated to support Compact Scientific cameras.
+ - Various bug fixes.
+
+2.9.0 (2016-11-15)
+ - Updated to run on Windows 10.
+
+2.8.8893 (2016-10-24)
+- Fixed bug where saving a multi-page tiff may stop recording when the buffer fills up. It now drops frames as needed and continues.
+- Improved accuracy of dropped frame percentage calculation.
+- Fixed bug which was causing AVI recordings to stop at the specifiec size, even if the check box was unchecked.
+- Made trigger edge selectable for cameras which allow it.  Disabled trigger edge selection during record mode.
+- Miscellaneous bug fixes.
+
+2.8.8779
+- various bug fixes
+- added support for the DCx 3260 camera, including 12bit monochrome images.
+- added status bar to 8bit image viewer.
+- save options available in Live Windows are not available in image viewers.
+- the main console window can brought to front via the task bar.
+- mouse cursor alternates color for color and monochrome images to ease viewing.
+- added timestamp annotation tool to live windows.
+
+2.7.x
+- Various bug fixes
+- New Histogram Tool implementation for both TSI/DCx Live Windows and TSI/DCx image viewers.
+- New TSI Camera Settings implementation.
+- Added Data Rate Test Tool for TSI USB cameras.
+- TSI USB cameras can dynamically connect/disconnect to the host.
+- Quick Save feature has been extended from single images during Live Capture to all image acquisition modes.
+- Quick Save feature can be toggled on/off.
+- New tiff writer implementation for DCx cameras.
+- Image rotation and image mirror flip added for TSI cameras.
+- Fixed rainbow pseudo coloring implementation.
+- Auto Contrast Scaling extended to DCx camera Live Window and all image viewers.
+- Optimized bitmap generation to improve UI responsiveness.
+- Optimized image analytic tools to improve UI responsiveness.
+- Added 8bit save options when working with images with greater than 8bit precision.
+- Various usability issues addressed for ThorCam in general.
+
+2.6.x (2016-01-05)
+- Various bug fixes.
+- TSI Color Camera supported added.
+- Improved Histogram smoothing algorithm and more information provided to user in Histogram Chart.
+- Histogram generation speed improvements.
+- Line profile chart provides more information to user.
+- Image Loader supports color images generated by TSI cameras.
+- Image Loader annotation tools made consistent between Live Window annotation tools.
+- Two Camera Overlay plugin supports color cameras overlays from multiple image sources.
+- Bitmap generation speed improvments for systems using x86-32bit processors.
+- Multi-page tiff generation moved from TSI SDK to ThorCam and supports generating multiple tiffs concurrently.
+- Status bar information made consistent in Live Windows for DCx and TSI cameras.
+- TSI settings dialog allows users to select color mode for color cameras.
+- Various usabiltity issues addressed for TSI setting dialog.
+- Single image quick save implemented for Live Capture mode.
+
+2.5.x (2015-04-10)
+- Various bug fixes.
+- DCx monochrome cameras that support 10-bit mode monochrome mode can now run ThorCam in 10-bit monochrome mode.
+- All cameras can now save out AVI (motion JPEG compression) movies in addition to the multi-page tiffs.
+- Fixed an issue that would cause the camera data to repeatedly get downloaded to the host PC.
+- Fixed an issue that might cause a CameraLink-dependent DLL to fail to load.
+- Added second-camera-overlay plugin.
+- Added AVI writing for DCx cameras.
+- Dropped-frame detection improvements for Thorlabs scientific cameras.
+- Thorlabs scientific camera SDK bug fixes in CameraLink and GigE.
+
+2.4.x (2014-10-16)
+- Added CameraLink support for Thorlabs scientific cameras. (This does not affect the DCx camera line.)
+- Fixed trigger polarity to match documented interface so that a value of 0 means high and 1 means low.
+
+
+LICENSES
+
+SharpAvi is used with the MIT license:
+
+The MIT License (MIT)
+Copyright (c) 2013-2014 Vasili Maslov
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
