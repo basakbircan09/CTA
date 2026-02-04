@@ -51,116 +51,175 @@ class SimpleStageApp(QMainWindow):
 
         # --- window + layout ---
         self.setWindowTitle("CTA – Stage + Plate Check")
-        self.resize(1400, 800)
+        self.resize(1400, 850)
 
         central = QWidget()
         outer_layout = QVBoxLayout(central)
-        outer_layout.setContentsMargins(5, 5, 5, 5)
-        outer_layout.setSpacing(5)
+        outer_layout.setContentsMargins(8, 8, 8, 8)
+        outer_layout.setSpacing(8)
         self.setCentralWidget(central)
 
-        # Top: main area (left buttons + right image)
-        top_layout = QHBoxLayout()
-        outer_layout.addLayout(top_layout, stretch=3)
+        # ==================== TOP TOOLBAR ====================
+        toolbar_layout = QHBoxLayout()
+        toolbar_layout.setSpacing(6)
 
-        # LEFT: buttons
-        left_panel = QVBoxLayout()
-        top_layout.addLayout(left_panel, stretch=1)
+        # Status indicator
+        self.status_label = QLabel("● DISCONNECTED")
+        self.status_label.setStyleSheet("""
+            QLabel {
+                color: #ff6b6b;
+                font-weight: bold;
+                padding: 6px 12px;
+                background-color: #2a2a2a;
+                border-radius: 4px;
+                min-width: 140px;
+            }
+        """)
+        toolbar_layout.addWidget(self.status_label)
 
-        # Connection status label
-        self.status_label = QLabel("Stage status: DISCONNECTED")
-        left_panel.addWidget(self.status_label)
+        toolbar_layout.addSpacing(10)
 
+        # Workflow buttons - styled
+        btn_style = """
+            QPushButton {
+                padding: 8px 16px;
+                font-weight: bold;
+                border-radius: 4px;
+                min-width: 80px;
+            }
+            QPushButton:hover {
+                background-color: #4a4a4a;
+            }
+            QPushButton:pressed {
+                background-color: #3a3a3a;
+            }
+        """
 
-        self.btn_connect = QPushButton("1. Connect (stage + camera)")
-        self.btn_init = QPushButton("2. Initialize (park 200,200,200)")
-        self.btn_cam_start = QPushButton("3. Camera Start (live)")
-        self.btn_capture = QPushButton("4. Take a Picture")
-        self.btn_plate = QPushButton("5. Plate detection")
-        self.btn_adjust = QPushButton("6. Auto Adjust Stage")
-        self.btn_we = QPushButton("7. WE Detection (TBD)")
+        self.btn_connect = QPushButton("Connect")
+        self.btn_init = QPushButton("Initialize")
+        self.btn_cam_start = QPushButton("Camera")
+        self.btn_capture = QPushButton("Capture")
+        self.btn_plate = QPushButton("Plate Detect")
+        self.btn_adjust = QPushButton("Auto Adjust")
+        self.btn_we = QPushButton("WE Detect")
 
-        left_panel.addWidget(self.btn_connect)
-        left_panel.addWidget(self.btn_init)
-        left_panel.addWidget(self.btn_cam_start)
-        left_panel.addWidget(self.btn_capture)
-        left_panel.addWidget(self.btn_plate)
-        left_panel.addWidget(self.btn_adjust)
-        left_panel.addWidget(self.btn_we)
+        for btn in [self.btn_connect, self.btn_init, self.btn_cam_start,
+                    self.btn_capture, self.btn_plate, self.btn_adjust, self.btn_we]:
+            btn.setStyleSheet(btn_style)
+            toolbar_layout.addWidget(btn)
+
+        toolbar_layout.addStretch()
+        outer_layout.addLayout(toolbar_layout)
+
+        # ==================== MIDDLE: SETTINGS + IMAGE ====================
+        middle_layout = QHBoxLayout()
+        middle_layout.setSpacing(10)
+        outer_layout.addLayout(middle_layout, stretch=4)
+
+        # LEFT: Settings panels
+        settings_panel = QVBoxLayout()
+        settings_panel.setSpacing(10)
+        middle_layout.addLayout(settings_panel, stretch=1)
 
         # --- Camera Settings Panel ---
         cam_group = QGroupBox("Camera Settings")
+        cam_group.setStyleSheet("QGroupBox { font-weight: bold; }")
         cam_layout = QGridLayout(cam_group)
+        cam_layout.setSpacing(8)
 
+        # Exposure row
         cam_layout.addWidget(QLabel("Exposure (ms):"), 0, 0)
         self.spin_exposure = QDoubleSpinBox()
         self.spin_exposure.setRange(1.0, 5000.0)
         self.spin_exposure.setValue(100.0)
         self.spin_exposure.setSingleStep(10.0)
         self.spin_exposure.setDecimals(1)
+        self.spin_exposure.setMinimumWidth(80)
         cam_layout.addWidget(self.spin_exposure, 0, 1)
         self.btn_set_exposure = QPushButton("Set")
         self.btn_set_exposure.clicked.connect(self.on_set_exposure)
         cam_layout.addWidget(self.btn_set_exposure, 0, 2)
 
-        cam_layout.addWidget(QLabel("Gain:"), 1, 0)
+        # Gain row
+        cam_layout.addWidget(QLabel("Gain (dB):"), 1, 0)
         self.spin_gain = QDoubleSpinBox()
         self.spin_gain.setRange(0.0, 48.0)
         self.spin_gain.setValue(0.0)
         self.spin_gain.setSingleStep(1.0)
         self.spin_gain.setDecimals(1)
+        self.spin_gain.setMinimumWidth(80)
         cam_layout.addWidget(self.spin_gain, 1, 1)
         self.btn_set_gain = QPushButton("Set")
         self.btn_set_gain.clicked.connect(self.on_set_gain)
         cam_layout.addWidget(self.btn_set_gain, 1, 2)
 
-        # White Balance presets
-        cam_layout.addWidget(QLabel("White Bal:"), 2, 0)
+        # White Balance preset row
+        cam_layout.addWidget(QLabel("White Balance:"), 2, 0)
         self.combo_wb = QComboBox()
         self.combo_wb.addItems(["Default", "Warm", "Cool", "Reduce NIR", "Custom"])
         self.combo_wb.currentTextChanged.connect(self.on_wb_preset_changed)
         cam_layout.addWidget(self.combo_wb, 2, 1, 1, 2)
 
-        # White Balance RGB sliders (for Custom)
-        cam_layout.addWidget(QLabel("R:"), 3, 0)
+        # RGB on one row
+        rgb_layout = QHBoxLayout()
+        rgb_layout.setSpacing(4)
+        rgb_layout.addWidget(QLabel("R:"))
         self.spin_wb_r = QDoubleSpinBox()
         self.spin_wb_r.setRange(0.1, 4.0)
         self.spin_wb_r.setValue(1.0)
         self.spin_wb_r.setSingleStep(0.1)
         self.spin_wb_r.setDecimals(2)
-        cam_layout.addWidget(self.spin_wb_r, 3, 1, 1, 2)
+        self.spin_wb_r.setMaximumWidth(65)
+        rgb_layout.addWidget(self.spin_wb_r)
 
-        cam_layout.addWidget(QLabel("G:"), 4, 0)
+        rgb_layout.addWidget(QLabel("G:"))
         self.spin_wb_g = QDoubleSpinBox()
         self.spin_wb_g.setRange(0.1, 4.0)
         self.spin_wb_g.setValue(1.0)
         self.spin_wb_g.setSingleStep(0.1)
         self.spin_wb_g.setDecimals(2)
-        cam_layout.addWidget(self.spin_wb_g, 4, 1, 1, 2)
+        self.spin_wb_g.setMaximumWidth(65)
+        rgb_layout.addWidget(self.spin_wb_g)
 
-        cam_layout.addWidget(QLabel("B:"), 5, 0)
+        rgb_layout.addWidget(QLabel("B:"))
         self.spin_wb_b = QDoubleSpinBox()
         self.spin_wb_b.setRange(0.1, 4.0)
         self.spin_wb_b.setValue(1.0)
         self.spin_wb_b.setSingleStep(0.1)
         self.spin_wb_b.setDecimals(2)
-        cam_layout.addWidget(self.spin_wb_b, 5, 1, 1, 2)
+        self.spin_wb_b.setMaximumWidth(65)
+        rgb_layout.addWidget(self.spin_wb_b)
+        rgb_layout.addStretch()
 
-        self.btn_apply_wb = QPushButton("Apply WB")
+        cam_layout.addLayout(rgb_layout, 3, 0, 1, 3)
+
+        # Apply WB button
+        self.btn_apply_wb = QPushButton("Apply White Balance")
         self.btn_apply_wb.clicked.connect(self.on_apply_white_balance)
-        cam_layout.addWidget(self.btn_apply_wb, 6, 0, 1, 3)
+        cam_layout.addWidget(self.btn_apply_wb, 4, 0, 1, 3)
 
-        left_panel.addWidget(cam_group)
+        settings_panel.addWidget(cam_group)
 
         # --- Stage Control Panel ---
         stage_group = QGroupBox("Stage Control")
+        stage_group.setStyleSheet("QGroupBox { font-weight: bold; }")
         stage_layout = QVBoxLayout(stage_group)
+        stage_layout.setSpacing(10)
 
         # Current position display
-        self.pos_label = QLabel("Position: X=?.?? Y=?.?? Z=?.??")
+        self.pos_label = QLabel("Position:  X = ?.??    Y = ?.??    Z = ?.??")
+        self.pos_label.setStyleSheet("""
+            QLabel {
+                font-family: monospace;
+                font-size: 12px;
+                padding: 8px;
+                background-color: #1a1a1a;
+                border-radius: 4px;
+            }
+        """)
         stage_layout.addWidget(self.pos_label)
 
-        # Step size control
+        # Step size + Refresh row
         step_layout = QHBoxLayout()
         step_layout.addWidget(QLabel("Step (mm):"))
         self.spin_step = QDoubleSpinBox()
@@ -168,86 +227,152 @@ class SimpleStageApp(QMainWindow):
         self.spin_step.setValue(5.0)
         self.spin_step.setSingleStep(1.0)
         self.spin_step.setDecimals(1)
+        self.spin_step.setMaximumWidth(80)
         step_layout.addWidget(self.spin_step)
-        self.btn_refresh_pos = QPushButton("Refresh")
+        step_layout.addStretch()
+        self.btn_refresh_pos = QPushButton("↻ Refresh")
         self.btn_refresh_pos.clicked.connect(self.on_refresh_position)
         step_layout.addWidget(self.btn_refresh_pos)
         stage_layout.addLayout(step_layout)
 
-        # Jog buttons grid: X, Y, Z with +/-
+        # Jog buttons - larger and clearer
         jog_grid = QGridLayout()
-        jog_grid.addWidget(QLabel("X:"), 0, 0)
-        self.btn_x_minus = QPushButton("-")
-        self.btn_x_plus = QPushButton("+")
+        jog_grid.setSpacing(6)
+
+        jog_btn_style = """
+            QPushButton {
+                font-size: 16px;
+                font-weight: bold;
+                min-width: 50px;
+                min-height: 35px;
+            }
+        """
+
+        # X row
+        x_label = QLabel("X:")
+        x_label.setStyleSheet("font-weight: bold; font-size: 14px;")
+        jog_grid.addWidget(x_label, 0, 0)
+        self.btn_x_minus = QPushButton("−")
+        self.btn_x_minus.setStyleSheet(jog_btn_style)
         self.btn_x_minus.clicked.connect(lambda: self.on_jog_axis(Axis.X, -1))
-        self.btn_x_plus.clicked.connect(lambda: self.on_jog_axis(Axis.X, 1))
         jog_grid.addWidget(self.btn_x_minus, 0, 1)
+        self.btn_x_plus = QPushButton("+")
+        self.btn_x_plus.setStyleSheet(jog_btn_style)
+        self.btn_x_plus.clicked.connect(lambda: self.on_jog_axis(Axis.X, 1))
         jog_grid.addWidget(self.btn_x_plus, 0, 2)
 
-        jog_grid.addWidget(QLabel("Y:"), 1, 0)
-        self.btn_y_minus = QPushButton("-")
-        self.btn_y_plus = QPushButton("+")
+        # Y row
+        y_label = QLabel("Y:")
+        y_label.setStyleSheet("font-weight: bold; font-size: 14px;")
+        jog_grid.addWidget(y_label, 1, 0)
+        self.btn_y_minus = QPushButton("−")
+        self.btn_y_minus.setStyleSheet(jog_btn_style)
         self.btn_y_minus.clicked.connect(lambda: self.on_jog_axis(Axis.Y, -1))
-        self.btn_y_plus.clicked.connect(lambda: self.on_jog_axis(Axis.Y, 1))
         jog_grid.addWidget(self.btn_y_minus, 1, 1)
+        self.btn_y_plus = QPushButton("+")
+        self.btn_y_plus.setStyleSheet(jog_btn_style)
+        self.btn_y_plus.clicked.connect(lambda: self.on_jog_axis(Axis.Y, 1))
         jog_grid.addWidget(self.btn_y_plus, 1, 2)
 
-        jog_grid.addWidget(QLabel("Z:"), 2, 0)
-        self.btn_z_minus = QPushButton("-")
-        self.btn_z_plus = QPushButton("+")
+        # Z row
+        z_label = QLabel("Z:")
+        z_label.setStyleSheet("font-weight: bold; font-size: 14px;")
+        jog_grid.addWidget(z_label, 2, 0)
+        self.btn_z_minus = QPushButton("−")
+        self.btn_z_minus.setStyleSheet(jog_btn_style)
         self.btn_z_minus.clicked.connect(lambda: self.on_jog_axis(Axis.Z, -1))
-        self.btn_z_plus.clicked.connect(lambda: self.on_jog_axis(Axis.Z, 1))
         jog_grid.addWidget(self.btn_z_minus, 2, 1)
+        self.btn_z_plus = QPushButton("+")
+        self.btn_z_plus.setStyleSheet(jog_btn_style)
+        self.btn_z_plus.clicked.connect(lambda: self.on_jog_axis(Axis.Z, 1))
         jog_grid.addWidget(self.btn_z_plus, 2, 2)
+
+        # Add spacing column
+        jog_grid.setColumnStretch(3, 1)
 
         stage_layout.addLayout(jog_grid)
 
-        # Absolute position entry
-        abs_grid = QGridLayout()
-        abs_grid.addWidget(QLabel("Go to:"), 0, 0, 1, 3)
+        # Separator
+        separator = QLabel("")
+        separator.setStyleSheet("background-color: #3a3a3a; min-height: 1px; max-height: 1px;")
+        stage_layout.addWidget(separator)
 
-        abs_grid.addWidget(QLabel("X:"), 1, 0)
+        # Absolute position entry - horizontal layout
+        goto_layout = QHBoxLayout()
+        goto_layout.setSpacing(8)
+
+        goto_layout.addWidget(QLabel("Go to:"))
+
+        goto_layout.addWidget(QLabel("X:"))
         self.spin_goto_x = QDoubleSpinBox()
         self.spin_goto_x.setRange(0.0, 300.0)
         self.spin_goto_x.setValue(200.0)
         self.spin_goto_x.setDecimals(2)
-        abs_grid.addWidget(self.spin_goto_x, 1, 1, 1, 2)
+        self.spin_goto_x.setMaximumWidth(80)
+        goto_layout.addWidget(self.spin_goto_x)
 
-        abs_grid.addWidget(QLabel("Y:"), 2, 0)
+        goto_layout.addWidget(QLabel("Y:"))
         self.spin_goto_y = QDoubleSpinBox()
         self.spin_goto_y.setRange(0.0, 300.0)
         self.spin_goto_y.setValue(200.0)
         self.spin_goto_y.setDecimals(2)
-        abs_grid.addWidget(self.spin_goto_y, 2, 1, 1, 2)
+        self.spin_goto_y.setMaximumWidth(80)
+        goto_layout.addWidget(self.spin_goto_y)
 
-        abs_grid.addWidget(QLabel("Z:"), 3, 0)
+        goto_layout.addWidget(QLabel("Z:"))
         self.spin_goto_z = QDoubleSpinBox()
         self.spin_goto_z.setRange(0.0, 300.0)
         self.spin_goto_z.setValue(200.0)
         self.spin_goto_z.setDecimals(2)
-        abs_grid.addWidget(self.spin_goto_z, 3, 1, 1, 2)
+        self.spin_goto_z.setMaximumWidth(80)
+        goto_layout.addWidget(self.spin_goto_z)
 
-        self.btn_goto = QPushButton("Go to Position")
+        self.btn_goto = QPushButton("Go")
+        self.btn_goto.setStyleSheet("font-weight: bold; min-width: 60px;")
         self.btn_goto.clicked.connect(self.on_goto_position)
-        abs_grid.addWidget(self.btn_goto, 4, 0, 1, 3)
+        goto_layout.addWidget(self.btn_goto)
 
-        stage_layout.addLayout(abs_grid)
+        goto_layout.addStretch()
+        stage_layout.addLayout(goto_layout)
 
-        left_panel.addWidget(stage_group)
-
-        left_panel.addStretch()
+        settings_panel.addWidget(stage_group)
+        settings_panel.addStretch()
 
         # RIGHT: image display
         self.image_label = QLabel("Live / captured / processed image will appear here")
         self.image_label.setAlignment(Qt.AlignCenter)
-        self.image_label.setStyleSheet("background-color: #202020; color: white;")
-        top_layout.addWidget(self.image_label, stretch=2)
+        self.image_label.setStyleSheet("""
+            QLabel {
+                background-color: #1a1a1a;
+                color: #666;
+                border: 2px solid #333;
+                border-radius: 8px;
+                font-size: 14px;
+            }
+        """)
+        self.image_label.setMinimumSize(800, 500)
+        middle_layout.addWidget(self.image_label, stretch=2)
 
-        # BOTTOM: log/output
+        # ==================== BOTTOM: LOG ====================
+        log_group = QGroupBox("Log")
+        log_group.setStyleSheet("QGroupBox { font-weight: bold; }")
+        log_layout = QVBoxLayout(log_group)
+        log_layout.setContentsMargins(4, 4, 4, 4)
+
         self.log_widget = QTextEdit()
         self.log_widget.setReadOnly(True)
         self.log_widget.setPlaceholderText("Log output will appear here...")
-        outer_layout.addWidget(self.log_widget, stretch=1)
+        self.log_widget.setMaximumHeight(120)
+        self.log_widget.setStyleSheet("""
+            QTextEdit {
+                background-color: #1a1a1a;
+                border: none;
+                font-family: monospace;
+                font-size: 11px;
+            }
+        """)
+        log_layout.addWidget(self.log_widget)
+        outer_layout.addWidget(log_group)
 
         # Connect buttons to handlers
         self.btn_connect.clicked.connect(self.on_connect_clicked)
@@ -267,6 +392,34 @@ class SimpleStageApp(QMainWindow):
             "error": "[ERROR]"
         }.get(level, "[INFO]")
         self.log_widget.append(f"{prefix} {message}")
+
+    # ---------- status helper ----------
+
+    def set_status(self, status: str, state: str = "disconnected"):
+        """Update status label with colored indicator.
+
+        Args:
+            status: Text to display
+            state: One of 'disconnected', 'connecting', 'ready', 'error'
+        """
+        colors = {
+            "disconnected": "#ff6b6b",  # Red
+            "connecting": "#ffd93d",     # Yellow
+            "ready": "#6bcb77",          # Green
+            "error": "#ff6b6b",          # Red
+        }
+        color = colors.get(state, "#ff6b6b")
+        self.status_label.setText(f"● {status}")
+        self.status_label.setStyleSheet(f"""
+            QLabel {{
+                color: {color};
+                font-weight: bold;
+                padding: 6px 12px;
+                background-color: #2a2a2a;
+                border-radius: 4px;
+                min-width: 140px;
+            }}
+        """)
 
     # ---------- image helper ----------
 
@@ -288,16 +441,16 @@ class SimpleStageApp(QMainWindow):
 
     def on_connect_clicked(self):
         try:
-            self.status_label.setText("Stage status: CONNECTING...")
+            self.set_status("CONNECTING...", "connecting")
             self.log("Stage: connecting to all controllers...", "info")
 
             future = self.connection_service.connect()
             future.result(timeout=30)  # Wait for connection to complete
 
-            self.status_label.setText(f"Stage status: {self.connection_service.state.connection.name}")
+            self.set_status("CONNECTED", "connecting")
             self.log("Stage: all controllers connected successfully", "info")
         except Exception as e:
-            self.status_label.setText("Stage status: ERROR")
+            self.set_status("ERROR", "error")
             self.log(f"Stage connect error: {e}", "error")
             QMessageBox.critical(self, "Connection error", str(e))
 
@@ -306,26 +459,27 @@ class SimpleStageApp(QMainWindow):
             # Check if connected first
             if not self.connection_service.state.connection.name == "CONNECTED":
                 QMessageBox.warning(self, "Not Connected",
-                    "Please connect to controllers first (Step 1).")
+                    "Please connect to controllers first.")
                 return
 
-            self.status_label.setText("Stage status: INITIALIZING...")
+            self.set_status("INITIALIZING...", "connecting")
             self.log("Stage: initializing and referencing all axes...", "info")
 
             # Wait for initialization to complete
             init_future = self.connection_service.initialize()
             init_future.result(timeout=120)  # Referencing can take time
 
+            self.set_status("PARKING...", "connecting")
             self.log("Stage: initialization complete, moving to park position...", "info")
 
             # Now move to park position
             move_future = self.motion_service.move_to_position_safe_z(self.park_position)
             move_future.result(timeout=60)
 
-            self.status_label.setText(f"Stage status: {self.connection_service.state.connection.name}")
+            self.set_status("READY", "ready")
             self.log(f"Stage initialized and parked at {self.park_position}.", "info")
         except Exception as e:
-            self.status_label.setText("Stage status: ERROR")
+            self.set_status("ERROR", "error")
             self.log(f"Initialize error: {e}", "error")
             QMessageBox.critical(self, "Initialize error", str(e))
 
