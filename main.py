@@ -288,21 +288,42 @@ class SimpleStageApp(QMainWindow):
 
     def on_connect_clicked(self):
         try:
-            self.connection_service.connect()
+            self.status_label.setText("Stage status: CONNECTING...")
+            self.log("Stage: connecting to all controllers...", "info")
+
+            future = self.connection_service.connect()
+            future.result(timeout=30)  # Wait for connection to complete
+
             self.status_label.setText(f"Stage status: {self.connection_service.state.connection.name}")
-            self.log("Stage: connect() requested", "info")
+            self.log("Stage: all controllers connected successfully", "info")
         except Exception as e:
             self.status_label.setText("Stage status: ERROR")
             self.log(f"Stage connect error: {e}", "error")
+            QMessageBox.critical(self, "Connection error", str(e))
 
     def on_initialize_clicked(self):
         try:
-            self.connection_service.initialize()
-            future = self.motion_service.move_to_position_safe_z(self.park_position)
-            future.result(timeout=60)
+            # Check if connected first
+            if not self.connection_service.state.connection.name == "CONNECTED":
+                QMessageBox.warning(self, "Not Connected",
+                    "Please connect to controllers first (Step 1).")
+                return
+
+            self.status_label.setText("Stage status: INITIALIZING...")
+            self.log("Stage: initializing and referencing all axes...", "info")
+
+            # Wait for initialization to complete
+            init_future = self.connection_service.initialize()
+            init_future.result(timeout=120)  # Referencing can take time
+
+            self.log("Stage: initialization complete, moving to park position...", "info")
+
+            # Now move to park position
+            move_future = self.motion_service.move_to_position_safe_z(self.park_position)
+            move_future.result(timeout=60)
 
             self.status_label.setText(f"Stage status: {self.connection_service.state.connection.name}")
-            self.log("Stage initialized and parked at 200,200,200.", "info")
+            self.log(f"Stage initialized and parked at {self.park_position}.", "info")
         except Exception as e:
             self.status_label.setText("Stage status: ERROR")
             self.log(f"Initialize error: {e}", "error")
@@ -416,6 +437,10 @@ class SimpleStageApp(QMainWindow):
 
     def on_adjust_clicked(self):
         """6- Auto Adjust Stage: loop capture + detect + move."""
+        if not self._is_stage_ready():
+            QMessageBox.warning(self, "Stage Not Ready",
+                "Please connect and initialize the stage first.")
+            return
         try:
             # Ensure camera is connected
             if not self.camera.is_connected:
@@ -581,8 +606,15 @@ class SimpleStageApp(QMainWindow):
 
     # ---------- stage control handlers ----------
 
+    def _is_stage_ready(self) -> bool:
+        """Check if stage is connected and initialized."""
+        return self.connection_service.is_ready()
+
     def on_refresh_position(self):
         """Refresh and display current stage position."""
+        if not self._is_stage_ready():
+            self.log("Cannot get position: stage not initialized", "warn")
+            return
         try:
             pos = self.motion_service.get_current_position()
             self.pos_label.setText(f"Position: X={pos.x:.2f} Y={pos.y:.2f} Z={pos.z:.2f}")
@@ -596,6 +628,10 @@ class SimpleStageApp(QMainWindow):
 
     def on_jog_axis(self, axis: Axis, direction: int):
         """Jog a single axis by step size in given direction (+1 or -1)."""
+        if not self._is_stage_ready():
+            QMessageBox.warning(self, "Stage Not Ready",
+                "Please connect and initialize the stage first.")
+            return
         try:
             step = self.spin_step.value() * direction
             self.log(f"Jogging {axis.value} by {step:+.1f} mm...", "info")
@@ -607,6 +643,10 @@ class SimpleStageApp(QMainWindow):
 
     def on_goto_position(self):
         """Move stage to absolute position from spinbox values."""
+        if not self._is_stage_ready():
+            QMessageBox.warning(self, "Stage Not Ready",
+                "Please connect and initialize the stage first.")
+            return
         try:
             target = Position(
                 x=self.spin_goto_x.value(),
@@ -633,6 +673,30 @@ class SimpleStageApp(QMainWindow):
             self.live_timer.stop()
             self.live_running = False
             self.btn_cam_start.setText("3. Camera Start (live)")
+
+    def closeEvent(self, event):
+        """Clean up hardware connections when app closes."""
+        self.log("Closing application, disconnecting hardware...", "info")
+
+        # Stop live view
+        if self.live_running:
+            self.live_timer.stop()
+            self.live_running = False
+
+        # Disconnect camera
+        try:
+            if self.camera.is_connected:
+                self.camera.disconnect()
+        except Exception as e:
+            print(f"Camera disconnect error: {e}")
+
+        # Disconnect stage
+        try:
+            self.connection_service.shutdown()
+        except Exception as e:
+            print(f"Stage disconnect error: {e}")
+
+        event.accept()
 
 
 def main():
