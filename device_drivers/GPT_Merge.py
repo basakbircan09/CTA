@@ -13,7 +13,7 @@ DEFAULT_MIN_CIRCULARITY = 0.4
 DEFAULT_MAX_INTENSITY_CV = 0.3   # normalized non-uniformity threshold
 
 # Resize
-DEFAULT_RESIZE_PERCENT = 90        # for detection
+DEFAULT_RESIZE_PERCENT = 100       # for detection (full resolution)
 DEFAULT_FINAL_DISPLAY_SCALE = 60   # for display only
 # ====================================================
 
