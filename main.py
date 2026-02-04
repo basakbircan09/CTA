@@ -42,6 +42,8 @@ class SimpleStageApp(QMainWindow):
 
         # path of last captured image
         self.last_image_path: str | None = None
+        # path of last detected plate image
+        self.last_plate_path: str | None = None
 
         # Positions
         self.park_position = Position(x=200.0, y=200.0, z=200.0)
@@ -332,7 +334,22 @@ class SimpleStageApp(QMainWindow):
 
             save_dir = PROJECT_ROOT / "artifacts" / "captures"
             save_dir.mkdir(parents=True, exist_ok=True)
-            filename = save_dir / "capture.png"
+
+            # Build filename from current settings
+            exp = self.spin_exposure.value()
+            gain = self.spin_gain.value()
+            r = self.spin_wb_r.value()
+            g = self.spin_wb_g.value()
+            b = self.spin_wb_b.value()
+
+            base_name = f"Photo_{exp:.1f}_{gain:.1f}_{r:.2f}_{g:.2f}_{b:.2f}"
+
+            # Find unique filename with incrementing suffix
+            filename = save_dir / f"{base_name}.png"
+            counter = 1
+            while filename.exists():
+                filename = save_dir / f"{base_name}_{counter}.png"
+                counter += 1
 
             frame = self.camera.save_frame(str(filename))
             self.last_image_path = str(filename)
@@ -365,6 +382,7 @@ class SimpleStageApp(QMainWindow):
 
         try:
             save_dir = PROJECT_ROOT / "artifacts" / "plate_detection"
+            save_dir.mkdir(parents=True, exist_ok=True)
             result = analyze_plate_and_spots(image_path, str(save_dir))
 
             if result["error"]:
@@ -373,26 +391,25 @@ class SimpleStageApp(QMainWindow):
                 QMessageBox.warning(self, "Plate detection", msg)
                 return
 
-            output_img = result["all_spots_image"]
-            if output_img is not None:
-                pix = self.cv_to_qpixmap(output_img)
-                self.image_label.setPixmap(pix)
-
-            bbox = result["plate_bbox"]
-            total_spots = len(result["all_spots"])
-            accepted = len(result["accepted_spots"])
-            rejected = len(result["rejected_spots"])
-
             if not result["plate_detected"]:
                 msg = "No plate detected in image."
                 self.log(msg, "warn")
                 QMessageBox.warning(self, "Plate detection", msg)
-            else:
-                msg = (f"Plate detected at {bbox}\n"
-                       f"Total spots: {total_spots}\n"
-                       f"Accepted: {accepted}, Rejected: {rejected}")
-                self.log(msg, "info")
-                QMessageBox.information(self, "Plate detection", msg)
+                return
+
+            # Save and display just the cropped plate image
+            plate_img = result["plate_image"]
+            plate_path = save_dir / "plate.png"
+            cv2.imwrite(str(plate_path), plate_img)
+            self.last_plate_path = str(plate_path)
+
+            pix = self.cv_to_qpixmap(plate_img)
+            self.image_label.setPixmap(pix)
+
+            bbox = result["plate_bbox"]
+            msg = f"Plate detected at {bbox}\nSaved to: {plate_path}"
+            self.log(msg, "info")
+            QMessageBox.information(self, "Plate detection", msg)
         except Exception as e:
             self.log(f"Plate detection error: {e}", "error")
             QMessageBox.critical(self, "Plate detection error", str(e))
@@ -432,24 +449,36 @@ class SimpleStageApp(QMainWindow):
 
 
     def on_we_clicked(self):
-        """7- WE Detection (bubble/spot check)."""
-        # Prefer last captured image; otherwise let user choose
-        image_path = self.last_image_path
+        """7- WE Detection (bubble/spot check) on detected plate image."""
+        # Prefer last detected plate image; otherwise let user choose
+        image_path = self.last_plate_path
 
         if not image_path:
-            file_path, _ = QFileDialog.getOpenFileName(
+            # No plate detected yet, ask user if they want to select an image
+            msg = "No plate detected yet. Please run Plate Detection first, or select an image manually."
+            self.log(msg, "warn")
+            reply = QMessageBox.question(
                 self,
-                "Select image for WE (bubble) detection",
-                str(PROJECT_ROOT),
-                "Images (*.png *.jpg *.jpeg *.bmp)",
+                "WE Detection",
+                msg + "\n\nWould you like to select an image manually?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
             )
-            if not file_path:
-                self.log("WE detection cancelled (no image).", "warn")
+            if reply == QMessageBox.StandardButton.Yes:
+                file_path, _ = QFileDialog.getOpenFileName(
+                    self,
+                    "Select image for WE (bubble) detection",
+                    str(PROJECT_ROOT),
+                    "Images (*.png *.jpg *.jpeg *.bmp)",
+                )
+                if not file_path:
+                    self.log("WE detection cancelled (no image).", "warn")
+                    return
+                image_path = file_path
+                self.log(f"WE detection using user-selected image: {image_path}", "info")
+            else:
                 return
-            image_path = file_path
-            self.log(f"WE detection using user-selected image: {image_path}", "info")
         else:
-            self.log(f"WE detection using last captured image: {image_path}", "info")
+            self.log(f"WE detection using detected plate image: {image_path}", "info")
 
         try:
             save_dir = PROJECT_ROOT / "artifacts" / "we_detection"

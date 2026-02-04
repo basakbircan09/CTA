@@ -220,6 +220,7 @@ def analyze_plate_and_spots(
         return {
             "plate_detected": False,
             "plate_bbox": None,
+            "plate_image": None,
             "all_spots": [],
             "accepted_spots": [],
             "rejected_spots": [],
@@ -236,6 +237,7 @@ def analyze_plate_and_spots(
         return {
             "plate_detected": False,
             "plate_bbox": None,
+            "plate_image": None,
             "all_spots": [],
             "accepted_spots": [],
             "rejected_spots": [],
@@ -276,6 +278,7 @@ def analyze_plate_and_spots(
     return {
         "plate_detected": True,
         "plate_bbox": plate_bbox,
+        "plate_image": plate,
         "all_spots": spots,
         "accepted_spots": accepted,
         "rejected_spots": rejected,
