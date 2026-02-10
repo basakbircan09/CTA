@@ -1,5 +1,14 @@
+import os
 import sys
 from pathlib import Path
+
+# Set up project root and paths FIRST
+PROJECT_ROOT = Path(__file__).parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+# Add PI DLL directory to PATH before any PI imports
+os.environ['PATH'] = str(PROJECT_ROOT) + os.pathsep + os.environ.get('PATH', '')
 
 import cv2
 import numpy as np
@@ -11,11 +20,9 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtGui import QPixmap, QImage
 from PySide6.QtCore import Qt, QTimer
-from device_drivers.PI_Control_System.core.models import Axis
 
-PROJECT_ROOT = Path(__file__).parent
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
+# Import PI module (this also sets up DLL paths)
+from device_drivers.PI_Control_System.core.models import Axis
 
 from device_drivers.PI_Control_System.app_factory import create_services
 from device_drivers.PI_Control_System.core.models import Position
