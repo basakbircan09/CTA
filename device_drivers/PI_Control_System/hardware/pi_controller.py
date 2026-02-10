@@ -109,10 +109,23 @@ class PIAxisController(AxisController):
 
             print(f"[{self._config.axis.value}] Initializing stage...")
 
-            # 1. Configure stage type
-            print(f"[{self._config.axis.value}]   - Configuring stage '{self._config.stage}'...")
-            self._device.CST(ax, self._config.stage)
-            time.sleep(0.1)
+            # 1. Check current stage configuration
+            current_stage = self._device.qCST().get(ax, '')
+            if current_stage != self._config.stage:
+                # Only configure if different
+                print(f"[{self._config.axis.value}]   - Configuring stage '{self._config.stage}'...")
+                try:
+                    self._device.CST(ax, self._config.stage)
+                    time.sleep(0.1)
+                except Exception as e:
+                    # Stage database error - check if already configured correctly
+                    current_stage = self._device.qCST().get(ax, '')
+                    if current_stage == self._config.stage:
+                        print(f"[{self._config.axis.value}]   - Stage already configured (database unavailable)")
+                    else:
+                        raise e
+            else:
+                print(f"[{self._config.axis.value}]   - Stage already configured as '{self._config.stage}'")
 
             # 2. Enable servo
             print(f"[{self._config.axis.value}]   - Enabling servo...")
