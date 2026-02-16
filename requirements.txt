@@ -1,2 +1,9 @@
 PySide6
 pipython
+numpy
+pylablib
+opencv-python
+PyYAML
+tifffile
+pytest
+pytest-qt

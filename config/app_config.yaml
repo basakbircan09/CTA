@@ -1,3 +1,9 @@
 app:
   use_mock_stage: true
-  examples_dir: "./CTA/examples"
+  examples_dir: "./examples"
+
+thorlabs:
+  dll_dir: "C:\\Program Files\\Thorlabs\\ThorImageCAM\\Bin"
+
+paths:
+  pi_dll_dir: "./lib/pi_dlls"

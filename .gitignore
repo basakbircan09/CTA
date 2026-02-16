@@ -12,3 +12,10 @@ __pycache__/
 # Ignore data/output
 data/
 *.log
+
+# Archive and build artifacts
+_archive/
+artifacts/
+*.egg-info/
+dist/
+build/
