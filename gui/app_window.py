@@ -11,7 +11,7 @@ from device_drivers.PI_Control_System.app_factory import create_services
 from device_drivers.PI_Control_System.core.models import Axis, Position
 from device_drivers.thorlabs_camera_wrapper import ThorlabsCamera
 from device_drivers.plate_auto_adjuster import auto_adjust_plate
-from device_drivers.GPT_Merge import analyze_plate_and_spots
+from device_drivers.GPT_Merge_v3 import analyze_plate_and_spots
 from config.app_config_loader import load_app_config
 
 from gui.widgets.toolbar import WorkflowToolbar
