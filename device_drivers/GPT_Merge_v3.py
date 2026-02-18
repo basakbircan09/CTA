@@ -23,11 +23,11 @@ from skimage.color import rgb2gray
 from skimage.feature import blob_doh
 
 # ================= DEFAULT SETTINGS =================
-DEFAULT_MIN_SPOT_AREA = 460
+DEFAULT_MIN_SPOT_AREA = 1700
 DEFAULT_MAX_SPOT_AREA = 80000
 DEFAULT_MIN_CIRCULARITY = 0.25
 
-DEFAULT_MAX_INTENSITY_CV = 0.70
+DEFAULT_MAX_INTENSITY_CV = 0.35
 
 DEFAULT_RESIZE_PERCENT = 100
 DEFAULT_FINAL_DISPLAY_SCALE = 60
@@ -38,6 +38,13 @@ DEFAULT_MIN_DIST_BETWEEN = 15
 # ====================================================
 
 _REF_PLATE_AREA = 500 * 500
+
+# Post-refinement shape thresholds — reject misshapen contours & defects
+_POST_REFINE_MIN_CIRCULARITY = 0.30
+_POST_REFINE_MIN_SOLIDITY = 0.60
+
+# Minimum absolute intensity difference to consider a spot non-empty
+_MIN_DEPOSIT_CONTRAST_ABS = 12
 
 
 def resize_image(img, percent):
@@ -92,7 +99,8 @@ def _compute_area_bounds(plate_h, plate_w, min_area, max_area):
     # This prevents DoH from reporting plate-scale structures as blobs.
     plate_area = plate_h * plate_w
     abs_max = int(plate_area * 0.02)
-    scaled_max = min(scaled_max, max(abs_max, scaled_min * 10))
+    scaled_max = min(scaled_max, abs_max)
+    scaled_max = max(scaled_max, scaled_min)  # ensure eff_max >= eff_min
 
     return scaled_min, scaled_max
 
@@ -112,6 +120,21 @@ def _circle_contour(cx: int, cy: int, radius: float, n_pts: int = 32):
 
 
 # ------------------------------------------------------------------ #
+#  Helper: contour solidity (area / convex-hull area)
+# ------------------------------------------------------------------ #
+def _contour_solidity(contour):
+    """Return area / convex_hull_area.  Synthetic circles return 1.0."""
+    area = cv2.contourArea(contour)
+    if area < 1:
+        return 0.0
+    hull = cv2.convexHull(contour)
+    hull_area = cv2.contourArea(hull)
+    if hull_area < 1:
+        return 0.0
+    return area / hull_area
+
+
+# ------------------------------------------------------------------ #
 #  Detector 1 — SimpleBlobDetector (multi-threshold sweep)
 # ------------------------------------------------------------------ #
 def _detect_blob_detector(gray, eff_min, eff_max, min_circ):
@@ -123,13 +146,14 @@ def _detect_blob_detector(gray, eff_min, eff_max, min_circ):
     params.maxThreshold = 220
     params.thresholdStep = 5
 
-    # Dark blobs on lighter background
-    params.filterByColor = True
-    params.blobColor = 0
+    # Both polarities — DoH already covers both; unrestricting improves
+    # edge-well recall where illumination can invert contrast.
+    params.filterByColor = False
 
-    # Area filter (already scaled to plate size)
+    # Area filter — use 0.7x eff_min for better recall on smaller/edge spots;
+    # post-detection filters (shape, empty_well, faint) handle precision.
     params.filterByArea = True
-    params.minArea = float(eff_min)
+    params.minArea = float(eff_min * 0.7)
     params.maxArea = float(eff_max)
 
     # Circularity filter
@@ -208,8 +232,8 @@ def _detect_doh(gray, eff_min, eff_max):
         radius = sigma * sqrt(2)
         area = np.pi * radius ** 2
 
-        # Skip if outside area bounds
-        if area < eff_min or area > eff_max:
+        # Skip if outside area bounds (0.7x for better recall, matching blob detector)
+        if area < eff_min * 0.7 or area > eff_max:
             continue
 
         spots.append({
@@ -327,6 +351,12 @@ def _refine_contour(gray, spot, eff_min, eff_max):
     area = cv2.contourArea(real_contour)
     peri = cv2.arcLength(real_contour, True)
     circ = 4 * np.pi * area / (peri ** 2) if peri > 0 else 0.0
+    solidity = _contour_solidity(real_contour)
+
+    # Quality gate: only accept the refined contour if it's well-shaped.
+    # Thresholds match _POST_REFINE_MIN_* to avoid gate/filter gap.
+    if circ < _POST_REFINE_MIN_CIRCULARITY or solidity < _POST_REFINE_MIN_SOLIDITY or area > eff_max * 1.2:
+        return spot
 
     M = cv2.moments(real_contour)
     if M["m00"] == 0:
@@ -367,19 +397,30 @@ def detect_spots(plate_img,
     # Merge
     spots = _merge_spots(spots_blob, spots_doh, min_dist)
 
-    # Exclude spots whose centre falls within a 4% border margin.
-    # Edge regions are prone to lighting artifacts and partial detections.
-    margin_x = int(plate_w * 0.04)
-    margin_y = int(plate_h * 0.04)
+    # Exclude spots whose centre falls within a 1% border margin.
+    # Only excludes crop-boundary artifacts; 4% was cutting edge wells.
+    margin_x = int(plate_w * 0.01)
+    margin_y = int(plate_h * 0.01)
     spots = [s for s in spots
              if margin_x <= s["center"][0] <= plate_w - margin_x
              and margin_y <= s["center"][1] <= plate_h - margin_y]
 
+    # Preserve pre-refinement radius for bubble inspection later
+    for s in spots:
+        s["_original_radius"] = s["radius"]
+
     # Refine: replace synthetic circular contours with real spot boundaries
     spots = [_refine_contour(gray, s, eff_min, eff_max) for s in spots]
 
-    # Post-refinement minimum area filter (refined contours may be smaller)
-    spots = [s for s in spots if s["area"] >= eff_min * 0.5]
+    # Post-refinement area filter — refined contours may shrink or expand.
+    # Upper bound catches defect blobs that expanded past eff_max during refinement.
+    spots = [s for s in spots if eff_min * 0.5 <= s["area"] <= eff_max]
+
+    # Post-refinement shape filter — reject misshapen contours & defects.
+    # Synthetic circles (circularity=1.0, solidity=1.0) always pass.
+    spots = [s for s in spots
+             if s.get("circularity", 1.0) >= _POST_REFINE_MIN_CIRCULARITY
+             and _contour_solidity(s["contour"]) >= _POST_REFINE_MIN_SOLIDITY]
 
     return spots
 
@@ -388,7 +429,9 @@ def detect_spots(plate_img,
 #  Per-spot inspection radius
 # ------------------------------------------------------------------ #
 def compute_inspection_radius(spot):
-    return max(spot["radius"] * 0.75, 5.0)
+    """Use pre-refinement radius * 0.75 so bubble check isn't defeated by slim refinement."""
+    r = spot.get("_original_radius", spot["radius"])
+    return max(r * 0.75, 5.0)
 
 
 # ------------------------------------------------------------------ #
@@ -437,10 +480,13 @@ def has_bubble_or_hole(gray_plate, spot, r_check,
     return bubble or hole
 
 
-def is_too_faint(gray_plate, spot, min_contrast=DEFAULT_MIN_CONTRAST):
+def is_too_faint(gray_plate, spot, min_contrast=DEFAULT_MIN_CONTRAST,
+                 plate_bg_mean=None):
     """Check whether a spot is too faint relative to its local background.
 
     Compares the mean intensity inside the spot to a ring around it.
+    For edge wells where the ring extends past the plate boundary (ring
+    starvation), falls back to *plate_bg_mean* instead of rejecting.
     Returns True if the spot is not noticeably darker than the background.
     """
     cx, cy = spot["center"]
@@ -460,11 +506,21 @@ def is_too_faint(gray_plate, spot, min_contrast=DEFAULT_MIN_CONTRAST):
     inner_vals = gray_plate[inner_mask == 255]
     ring_vals = gray_plate[ring_mask == 255]
 
-    if len(inner_vals) < 10 or len(ring_vals) < 10:
+    # Inner check: need enough pixels inside the spot
+    if len(inner_vals) < 10:
         return True  # not enough pixels to judge
 
     mean_inner = float(np.mean(inner_vals))
-    mean_bg = float(np.mean(ring_vals))
+
+    # Ring check: for edge wells the ring may extend past the plate boundary.
+    # Fall back to global plate background mean when ring is starved.
+    if len(ring_vals) < 10:
+        if plate_bg_mean is not None:
+            mean_bg = plate_bg_mean
+        else:
+            return True  # no fallback available
+    else:
+        mean_bg = float(np.mean(ring_vals))
 
     # Spot should be darker than background.
     # contrast = (bg - spot) / bg; higher = darker spot = good.
@@ -473,6 +529,44 @@ def is_too_faint(gray_plate, spot, min_contrast=DEFAULT_MIN_CONTRAST):
     contrast = (mean_bg - mean_inner) / mean_bg
 
     return contrast < min_contrast
+
+
+# ------------------------------------------------------------------ #
+#  Empty-well discrimination
+# ------------------------------------------------------------------ #
+def _compute_plate_background_mean(gray_plate, spots):
+    """Return the mean intensity of plate pixels outside all detected spots."""
+    mask = np.ones(gray_plate.shape, dtype=np.uint8) * 255
+    for s in spots:
+        cx, cy = s["center"]
+        r = max(int(s["radius"]), 3)
+        cv2.circle(mask, (cx, cy), r, 0, -1)
+    bg_vals = gray_plate[mask == 255]
+    if len(bg_vals) == 0:
+        return float(np.mean(gray_plate))
+    return float(np.mean(bg_vals))
+
+
+def is_empty_well(gray_plate, spot, plate_bg_mean):
+    """Return True if the spot has no deposited material (empty well).
+
+    A real deposit must be sufficiently *darker* than the plate background.
+    Returns True if the darkening is below *_MIN_DEPOSIT_CONTRAST_ABS*,
+    or if the spot is lighter than background (not a deposit at all).
+    """
+    cx, cy = spot["center"]
+    r = max(int(spot["radius"]), 3)
+    h, w = gray_plate.shape[:2]
+
+    mask = np.zeros((h, w), dtype=np.uint8)
+    cv2.circle(mask, (cx, cy), r, 255, -1)
+    vals = gray_plate[mask == 255]
+    if len(vals) < 10:
+        return True  # too few pixels — treat as empty
+    mean_spot = float(np.mean(vals))
+    # Directional: spot must be darker than background by the threshold.
+    # If spot is lighter than background, (bg - spot) is negative → empty.
+    return (plate_bg_mean - mean_spot) < _MIN_DEPOSIT_CONTRAST_ABS
 
 
 # ------------------------------------------------------------------ #
@@ -602,16 +696,22 @@ def analyze_plate_and_spots(
 
     # Ensemble spot detection
     spots = detect_spots(plate, min_spot_area, max_spot_area, min_circularity)
+
+    # Pre-filter: remove non-spots (empty wells, faint/noise) BEFORE labeling.
+    # These false detections would otherwise create phantom rows in the grid.
+    plate_bg_mean = _compute_plate_background_mean(gray_plate, spots)
+    spots = [s for s in spots
+             if not is_empty_well(gray_plate, s, plate_bg_mean)
+             and not is_too_faint(gray_plate, s, plate_bg_mean=plate_bg_mean)]
+
+    # Label only real spots — clean grid without phantom rows
     spots = sort_and_label(spots)
 
-    # Defect classification: bubble/hole + faint check
+    # Defect classification: bubble/hole check on real spots
     accepted, rejected = [], []
     for s in spots:
         r_check = compute_inspection_radius(s)
-        if is_too_faint(gray_plate, s):
-            s["_reject_reason"] = "faint"
-            rejected.append(s)
-        elif has_bubble_or_hole(gray_plate, s, r_check, max_intensity_cv):
+        if has_bubble_or_hole(gray_plate, s, r_check, max_intensity_cv):
             s["_reject_reason"] = "bubble_or_hole"
             rejected.append(s)
         else:
