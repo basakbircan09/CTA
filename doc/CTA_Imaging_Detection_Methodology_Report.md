@@ -163,7 +163,7 @@ Computes second-order derivatives (Hessian matrix) at multiple scales. Detects b
 **Ensemble merge:**
 Union of both detector results with proximity-based deduplication. For overlapping detections (center distance < plate_short_side/40), the detection with larger area is kept.
 
-**Border exclusion:** Spots within 4% of plate edges are removed (edge regions prone to lighting artifacts).
+**Border exclusion:** Spots within 1% of plate edges are removed (edge regions prone to lighting artifacts).
 
 **Contour refinement:** Since both detectors return only center+radius (not actual contours), a refinement step extracts real spot boundaries:
 ```
@@ -198,7 +198,7 @@ A real deposit absorbs more light and should be noticeably darker than the surro
 ```
 values = grayscale pixels inside circular inspection region (75% of spot radius)
 cv_val = std(values) / (mean(values) + 1e-6)
-REJECT if cv_val > 0.70
+REJECT if cv_val > 0.35
 ```
 
 The Coefficient of Variation measures intensity non-uniformity. Bubbles trapped in the deposit create bright inclusions that raise variance dramatically. A healthy uniform deposit has low CV.
@@ -425,16 +425,16 @@ Photo filenames encode all acquisition parameters (exposure, gain, white balance
 
 | Category | Parameter | Value |
 |----------|-----------|-------|
-| Detection | Min spot area (base) | 460 px |
+| Detection | Min spot area (base) | 1,700 px |
 | Detection | Max spot area (base) | 80,000 px |
 | Detection | Min circularity | 0.25 |
 | Detection | Plate area cap | 2% |
-| Detection | Border margin | 4% per side |
+| Detection | Border margin | 1% per side |
 | SimpleBlobDetector | Threshold sweep | 10-220, step 5 |
 | DoH | Sensitivity threshold | 0.008 |
 | DoH | Sigma cap | plate_short_side / 25 |
 | Rejection | Faint contrast min | 8% darker than background |
-| Rejection | Bubble CV max | 0.70 |
+| Rejection | Bubble CV max | 0.35 |
 | Rejection | Hole area min | 10% of spot area |
 | Camera | Live view rate | 100 ms (10 fps) |
 | Stage | Default step | 5.0 mm (auto-adjust) |

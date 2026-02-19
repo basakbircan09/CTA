@@ -9,6 +9,9 @@ venv/
 __pycache__/
 *.pyc
 
+# Claude Code local config
+.claude/
+
 # Ignore data/output
 data/
 *.log
