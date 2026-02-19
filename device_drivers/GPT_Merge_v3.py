@@ -15,6 +15,7 @@ labelling, drawing) is carried forward from v2 with all fixes intact.
 
 import cv2
 import numpy as np
+import warnings
 from math import sqrt
 from pathlib import Path
 from typing import Dict, List, Tuple, Any, Optional
@@ -27,7 +28,9 @@ DEFAULT_MIN_SPOT_AREA = 1700
 DEFAULT_MAX_SPOT_AREA = 80000
 DEFAULT_MIN_CIRCULARITY = 0.25
 
-DEFAULT_MAX_INTENSITY_CV = 0.35
+DEFAULT_MAX_INTENSITY_CV = 0.45
+DEFAULT_SUSPICIOUS_CV_UPPER = 0.70
+DEFAULT_SUSPICIOUS_HOLE_UPPER = 0.30
 
 DEFAULT_RESIZE_PERCENT = 100
 DEFAULT_FINAL_DISPLAY_SCALE = 60
@@ -43,8 +46,9 @@ _REF_PLATE_AREA = 500 * 500
 _POST_REFINE_MIN_CIRCULARITY = 0.30
 _POST_REFINE_MIN_SOLIDITY = 0.60
 
-# Minimum absolute intensity difference to consider a spot non-empty
-_MIN_DEPOSIT_CONTRAST_ABS = 12
+# Minimum relative intensity drop to consider a spot non-empty.
+# A deposit must be at least 6% darker than the plate background.
+_MIN_DEPOSIT_CONTRAST_REL = 0.06
 
 
 def resize_image(img, percent):
@@ -221,7 +225,8 @@ def _detect_doh(gray, eff_min, eff_max):
             num_sigma=15,
             threshold=0.008,
         )
-    except Exception:
+    except Exception as exc:
+        warnings.warn(f"DoH detector failed: {exc}", RuntimeWarning, stacklevel=2)
         blobs = np.empty((0, 3))
 
     spots = []
@@ -252,32 +257,36 @@ def _detect_doh(gray, eff_min, eff_max):
 #  Ensemble merge — union + deduplication
 # ------------------------------------------------------------------ #
 def _merge_spots(spots_a, spots_b, min_dist=None):
-    """Merge two spot lists, deduplicating by proximity.
+    """Merge two spot lists via greedy clustering.
 
-    For every pair of spots from A and B that are closer than min_dist,
-    keep the one with the larger area (more confidently detected).
+    Concatenates both lists, sorts by descending area (prefer larger /
+    more-confident detections), then greedily accepts spots that are at
+    least *min_dist* from every already-accepted spot.  This handles
+    within-list duplicates (e.g. DoH multi-scale hits), cross-list
+    duplicates, and avoids transitive-merge issues.
     """
     if min_dist is None:
         min_dist = DEFAULT_MIN_DIST_BETWEEN
 
-    merged = [dict(s) for s in spots_a]   # deep-copy dicts to avoid mutation
+    pool = sorted(
+        [dict(s) for s in spots_a] + [dict(s) for s in spots_b],
+        key=lambda s: s["area"],
+        reverse=True,
+    )
 
-    for sb in spots_b:
-        bx, by = sb["center"]
-        duplicate = False
-        for i, sa in enumerate(merged):
-            ax, ay = sa["center"]
-            dist = sqrt((bx - ax) ** 2 + (by - ay) ** 2)
-            if dist < min_dist:
-                # Replace with the larger detection (don't mutate in place)
-                if sb["area"] > sa["area"]:
-                    merged[i] = dict(sb)
-                duplicate = True
+    accepted = []
+    for spot in pool:
+        sx, sy = spot["center"]
+        is_dup = False
+        for kept in accepted:
+            kx, ky = kept["center"]
+            if (sx - kx) ** 2 + (sy - ky) ** 2 < min_dist ** 2:
+                is_dup = True
                 break
-        if not duplicate:
-            merged.append(dict(sb))
+        if not is_dup:
+            accepted.append(spot)
 
-    return merged
+    return accepted
 
 
 # ------------------------------------------------------------------ #
@@ -318,44 +327,53 @@ def _refine_contour(gray, spot, eff_min, eff_max):
     if not contours:
         return spot
 
-    # Pick the contour whose centroid is closest to the detected centre
-    # and whose area is within bounds
-    best = None
-    best_dist = float("inf")
-    local_cx, local_cy = cx - x0, cy - y0  # centre in ROI coords
-
+    # Collect ALL contours whose centroid is near the expected spot centre.
+    # A bright reflection can split the spot into two separate regions in
+    # the binary mask; merging both halves before convex-hull gives a
+    # complete circle instead of a semicircle with a chord line.
+    local_cx, local_cy = cx - x0, cy - y0
+    nearby = []
     for c in contours:
         area = cv2.contourArea(c)
-        if not (eff_min * 0.3 <= area <= eff_max * 1.5):
+        if area < eff_min * 0.15:          # skip tiny noise fragments
             continue
-
+        if area > eff_max * 1.5:           # skip plate-scale
+            continue
         M = cv2.moments(c)
         if M["m00"] == 0:
             continue
         mcx = int(M["m10"] / M["m00"])
         mcy = int(M["m01"] / M["m00"])
-
         dist = sqrt((mcx - local_cx) ** 2 + (mcy - local_cy) ** 2)
-        if dist < best_dist:
-            best_dist = dist
-            best = c
+        if dist < spot["radius"]:          # within one radius of expected centre
+            nearby.append(c)
 
-    if best is None or best_dist > spot["radius"] * 1.2:
-        return spot  # no close-enough contour found, keep synthetic
+    if not nearby:
+        return spot
 
-    # Shift contour from ROI coords back to plate coords
+    # Merge all nearby contour points, shift to plate coords, convex hull.
+    # This reconstructs the full spot boundary even when a reflection split
+    # it into separate binary regions.
     offset = np.array([[[x0, y0]]], dtype=np.int32)
-    real_contour = best + offset
+    all_points = np.vstack(nearby) + offset
+    real_contour = cv2.convexHull(all_points)
 
-    # Recompute spot properties from real contour
+    # Recompute spot properties from the convex hull
     area = cv2.contourArea(real_contour)
     peri = cv2.arcLength(real_contour, True)
     circ = 4 * np.pi * area / (peri ** 2) if peri > 0 else 0.0
     solidity = _contour_solidity(real_contour)
 
     # Quality gate: only accept the refined contour if it's well-shaped.
-    # Thresholds match _POST_REFINE_MIN_* to avoid gate/filter gap.
-    if circ < _POST_REFINE_MIN_CIRCULARITY or solidity < _POST_REFINE_MIN_SOLIDITY or area > eff_max * 1.2:
+    # Upper bound matches the post-filter (eff_max) to avoid gate/filter gap.
+    if circ < _POST_REFINE_MIN_CIRCULARITY or solidity < _POST_REFINE_MIN_SOLIDITY or area > eff_max:
+        return spot
+
+    # Reject oversized refinements: if the merged hull area grew more than
+    # 20% beyond the original detection area, the merge likely incorporated
+    # a neighbouring feature.  Keep the synthetic circle instead.
+    detection_area = np.pi * spot["radius"] ** 2
+    if area > detection_area * 1.2:
         return spot
 
     M = cv2.moments(real_contour)
@@ -363,14 +381,22 @@ def _refine_contour(gray, spot, eff_min, eff_max):
         return spot
     new_cx = int(M["m10"] / M["m00"])
     new_cy = int(M["m01"] / M["m00"])
+
+    # Verify the merged hull centroid is near the expected location
+    if sqrt((new_cx - cx) ** 2 + (new_cy - cy) ** 2) > spot["radius"] * 1.2:
+        return spot
+
     new_radius = sqrt(area / np.pi)
 
-    spot["contour"] = real_contour.astype(np.int32)
-    spot["center"] = (new_cx, new_cy)
-    spot["radius"] = new_radius
-    spot["area"] = area
-    spot["circularity"] = circ
-    return spot
+    # Return a new dict — never mutate the input so the original synthetic
+    # contour survives as a fallback if something downstream drops this spot.
+    refined = dict(spot)
+    refined["contour"] = real_contour.astype(np.int32)
+    refined["center"] = (new_cx, new_cy)
+    refined["radius"] = new_radius
+    refined["area"] = area
+    refined["circularity"] = circ
+    return refined
 
 
 # ------------------------------------------------------------------ #
@@ -387,8 +413,11 @@ def detect_spots(plate_img,
     plate_h, plate_w = gray.shape[:2]
     eff_min, eff_max = _compute_area_bounds(plate_h, plate_w, min_area, max_area)
 
-    # Adaptive min_dist: ~1/40 of plate short side, clamped
-    min_dist = max(int(min(plate_h, plate_w) / 40), 8)
+    # Adaptive min_dist: plate-size fraction OR spot-radius fraction, whichever
+    # is larger.  The radius term prevents merging genuinely close small spots.
+    min_dist = max(int(min(plate_h, plate_w) / 40),
+                   int(sqrt(eff_min / np.pi) * 0.8),
+                   8)
 
     # Run both detectors
     spots_blob = _detect_blob_detector(gray, eff_min, eff_max, min_circularity)
@@ -397,13 +426,15 @@ def detect_spots(plate_img,
     # Merge
     spots = _merge_spots(spots_blob, spots_doh, min_dist)
 
-    # Exclude spots whose centre falls within a 1% border margin.
-    # Only excludes crop-boundary artifacts; 4% was cutting edge wells.
-    margin_x = int(plate_w * 0.01)
-    margin_y = int(plate_h * 0.01)
+    # Exclude spots too close to the plate edge.  The margin is the larger
+    # of 1% of the plate dimension or 1.5x the spot radius — this ensures
+    # the spot circle sits well within the plate (0.5r clearance from edge)
+    # and kills DoH corner artifacts whose circles extend past the boundary.
+    base_mx = int(plate_w * 0.01)
+    base_my = int(plate_h * 0.01)
     spots = [s for s in spots
-             if margin_x <= s["center"][0] <= plate_w - margin_x
-             and margin_y <= s["center"][1] <= plate_h - margin_y]
+             if max(base_mx, int(s["radius"] * 1.5)) <= s["center"][0] <= plate_w - max(base_mx, int(s["radius"] * 1.5))
+             and max(base_my, int(s["radius"] * 1.5)) <= s["center"][1] <= plate_h - max(base_my, int(s["radius"] * 1.5))]
 
     # Preserve pre-refinement radius for bubble inspection later
     for s in spots:
@@ -422,6 +453,11 @@ def detect_spots(plate_img,
              if s.get("circularity", 1.0) >= _POST_REFINE_MIN_CIRCULARITY
              and _contour_solidity(s["contour"]) >= _POST_REFINE_MIN_SOLIDITY]
 
+    # Post-refinement dedup: refinement can shift two detections (which had
+    # well-separated synthetic centres) onto the same real contour centre.
+    # Re-run greedy dedup on the refined centres to collapse these.
+    spots = _merge_spots(spots, [], min_dist)
+
     return spots
 
 
@@ -429,9 +465,15 @@ def detect_spots(plate_img,
 #  Per-spot inspection radius
 # ------------------------------------------------------------------ #
 def compute_inspection_radius(spot):
-    """Use pre-refinement radius * 0.75 so bubble check isn't defeated by slim refinement."""
-    r = spot.get("_original_radius", spot["radius"])
-    return max(r * 0.75, 5.0)
+    """Inspection radius for bubble/hole checks.
+
+    Uses the smaller of pre-refinement and refined radius so that
+    DoH detections (whose sigma-based radius can far exceed the real
+    deposit) don't inflate the inspection circle into background pixels.
+    """
+    orig = spot.get("_original_radius", spot["radius"])
+    refined = spot["radius"]
+    return max(min(orig, refined) * 0.75, 5.0)
 
 
 # ------------------------------------------------------------------ #
@@ -439,9 +481,17 @@ def compute_inspection_radius(spot):
 # ------------------------------------------------------------------ #
 DEFAULT_MIN_CONTRAST = 0.08   # spot must be >= 10% darker than background
 
-def has_bubble_or_hole(gray_plate, spot, r_check,
-                       max_intensity_cv=DEFAULT_MAX_INTENSITY_CV):
-    """Check whether a spot has bubbles (high CV) or holes (inner contours)."""
+
+def inspect_spot_defects(gray_plate, spot, r_check):
+    """Extract raw defect metrics for a spot.
+
+    Returns a dict with keys:
+      - cv_val:   coefficient of variation of pixel intensities
+      - hole_pct: fraction of spot area occupied by the largest inner contour
+                  (0.0 if no inner contours found)
+    Returns ``{"cv_val": float("inf"), "hole_pct": 1.0}`` when the spot
+    has too few pixels to analyse.
+    """
     cx, cy = spot["center"]
 
     mask = np.zeros(gray_plate.shape, dtype=np.uint8)
@@ -449,13 +499,12 @@ def has_bubble_or_hole(gray_plate, spot, r_check,
 
     values = gray_plate[mask == 255]
     if len(values) < 30:
-        return True
+        return {"cv_val": float("inf"), "hole_pct": 1.0}
 
-    cv_val = np.std(values) / (np.mean(values) + 1e-6)
-    bubble = cv_val > max_intensity_cv
+    cv_val = float(np.std(values) / (np.mean(values) + 1e-6))
 
     otsu_thresh, _ = cv2.threshold(
-        values.astype(np.uint8), 0, 255,
+        values.reshape(-1, 1).astype(np.uint8), 0, 255,
         cv2.THRESH_BINARY + cv2.THRESH_OTSU,
     )
     _, thresh_img = cv2.threshold(
@@ -467,17 +516,70 @@ def has_bubble_or_hole(gray_plate, spot, r_check,
         thresh_img, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_SIMPLE,
     )
 
-    hole = False
+    hole_pct = 0.0
     if hierarchy is not None:
         spot_area = np.pi * r_check ** 2
         for i, h in enumerate(hierarchy[0]):
             if h[3] != -1:
                 inner_area = cv2.contourArea(cnts[i])
-                if inner_area > 0.10 * spot_area:
-                    hole = True
-                    break
+                pct = inner_area / spot_area if spot_area > 0 else 0.0
+                if pct > hole_pct:
+                    hole_pct = pct
 
-    return bubble or hole
+    return {"cv_val": cv_val, "hole_pct": hole_pct}
+
+
+def classify_spot_defect(
+    metrics: Dict[str, float],
+    cv_lower: float = DEFAULT_MAX_INTENSITY_CV,
+    cv_upper: float = DEFAULT_SUSPICIOUS_CV_UPPER,
+    hole_lower: float = 0.15,
+    hole_upper: float = DEFAULT_SUSPICIOUS_HOLE_UPPER,
+) -> Tuple[str, str]:
+    """Classify a spot as ``"clean"``, ``"suspicious"``, or ``"defective"``.
+
+    Parameters
+    ----------
+    metrics : dict
+        Output of :func:`inspect_spot_defects`.
+    cv_lower / cv_upper : float
+        CV boundaries for clean / suspicious / defective bands.
+    hole_lower / hole_upper : float
+        Hole-percentage boundaries for the same bands.
+
+    Returns
+    -------
+    (tier, reason) : tuple[str, str]
+        *tier* is one of ``"clean"``, ``"suspicious"``, ``"defective"``.
+        *reason* is a short human-readable explanation.
+    """
+    cv_val = metrics["cv_val"]
+    hole_pct = metrics["hole_pct"]
+
+    # Defective — clearly bad
+    if cv_val > cv_upper:
+        return ("defective", f"CV={cv_val:.2f} > {cv_upper}")
+    if hole_pct > hole_upper:
+        return ("defective", f"hole={hole_pct:.0%} > {hole_upper:.0%}")
+
+    # Suspicious — borderline
+    if cv_val > cv_lower:
+        return ("suspicious", f"CV={cv_val:.2f} in [{cv_lower}–{cv_upper}]")
+    if hole_pct > hole_lower:
+        return ("suspicious", f"hole={hole_pct:.0%} in [{hole_lower:.0%}–{hole_upper:.0%}]")
+
+    return ("clean", "")
+
+
+def has_bubble_or_hole(gray_plate, spot, r_check,
+                       max_intensity_cv=DEFAULT_MAX_INTENSITY_CV):
+    """Check whether a spot has bubbles (high CV) or holes (inner contours).
+
+    Backward-compatible thin wrapper — returns True if the spot is not "clean".
+    """
+    metrics = inspect_spot_defects(gray_plate, spot, r_check)
+    tier, _ = classify_spot_defect(metrics, cv_lower=max_intensity_cv)
+    return tier != "clean"
 
 
 def is_too_faint(gray_plate, spot, min_contrast=DEFAULT_MIN_CONTRAST,
@@ -551,8 +653,8 @@ def is_empty_well(gray_plate, spot, plate_bg_mean):
     """Return True if the spot has no deposited material (empty well).
 
     A real deposit must be sufficiently *darker* than the plate background.
-    Returns True if the darkening is below *_MIN_DEPOSIT_CONTRAST_ABS*,
-    or if the spot is lighter than background (not a deposit at all).
+    Uses a relative threshold so strictness is consistent regardless of
+    absolute brightness (dark plates vs bright plates).
     """
     cx, cy = spot["center"]
     r = max(int(spot["radius"]), 3)
@@ -564,9 +666,9 @@ def is_empty_well(gray_plate, spot, plate_bg_mean):
     if len(vals) < 10:
         return True  # too few pixels — treat as empty
     mean_spot = float(np.mean(vals))
-    # Directional: spot must be darker than background by the threshold.
-    # If spot is lighter than background, (bg - spot) is negative → empty.
-    return (plate_bg_mean - mean_spot) < _MIN_DEPOSIT_CONTRAST_ABS
+    # Relative contrast: (bg - spot) / bg.  A deposit must be at least
+    # _MIN_DEPOSIT_CONTRAST_REL darker than the background.
+    return (plate_bg_mean - mean_spot) / max(plate_bg_mean, 1.0) < _MIN_DEPOSIT_CONTRAST_REL
 
 
 # ------------------------------------------------------------------ #
@@ -601,7 +703,7 @@ def sort_and_label(spots):
     for r, row in enumerate(rows):
         row = sorted(row, key=lambda s: s["center"][0])
         for c, s in enumerate(row):
-            s["label"] = f"{chr(65 + r)}{c + 1}"
+            s["label"] = f"{chr(65 + (r % 26))}{c + 1}"
             labeled.append(s)
 
     return labeled
@@ -626,12 +728,12 @@ def draw_results(image, spots, px, py, accepted_only=False):
     return out
 
 
-def draw_combined(image, accepted, rejected, px, py):
-    """Draw accepted (green) and rejected (red) spots on a single image."""
+def draw_combined(image, accepted, rejected, px, py, suspicious=None):
+    """Draw accepted (green), suspicious (yellow), and rejected (red) spots."""
     out = image.copy()
     offset = np.array([[[px, py]]], dtype=np.int32)
 
-    # Draw rejected first (red) so accepted (green) draws on top
+    # Draw order: rejected (red) → suspicious (yellow) → accepted (green)
     for s in rejected:
         contour = (s["contour"] + offset).astype(np.int32)
         cv2.drawContours(out, [contour], -1, (0, 0, 255), 2)
@@ -639,6 +741,14 @@ def draw_combined(image, accepted, rejected, px, py):
         cv2.circle(out, (gx, gy), 3, (0, 0, 255), -1)
         cv2.putText(out, s["label"], (gx + 5, gy - 5),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 1)
+
+    for s in (suspicious or []):
+        contour = (s["contour"] + offset).astype(np.int32)
+        cv2.drawContours(out, [contour], -1, (0, 255, 255), 2)
+        gx, gy = s["center"][0] + px, s["center"][1] + py
+        cv2.circle(out, (gx, gy), 3, (0, 255, 255), -1)
+        cv2.putText(out, s["label"], (gx + 5, gy - 5),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
 
     for s in accepted:
         contour = (s["contour"] + offset).astype(np.int32)
@@ -662,18 +772,21 @@ def analyze_plate_and_spots(
     max_spot_area: int = DEFAULT_MAX_SPOT_AREA,
     min_circularity: float = DEFAULT_MIN_CIRCULARITY,
     max_intensity_cv: float = DEFAULT_MAX_INTENSITY_CV,
+    suspicious_cv_upper: float = DEFAULT_SUSPICIOUS_CV_UPPER,
     plate_bbox: Optional[Tuple[int, int, int, int]] = None,
 ) -> Dict[str, Any]:
     """Main analysis: plate detect -> ensemble spot detect -> classify -> label."""
+    _error_base = {
+        "plate_detected": False, "plate_bbox": None,
+        "plate_image": None, "all_spots": [],
+        "accepted_spots": [], "suspicious_spots": [], "rejected_spots": [],
+        "all_spots_image": None, "accepted_spots_image": None,
+        "combined_image": None, "error": None,
+    }
+
     img = cv2.imread(str(image_path))
     if img is None:
-        return {
-            "plate_detected": False, "plate_bbox": None,
-            "plate_image": None, "all_spots": [],
-            "accepted_spots": [], "rejected_spots": [],
-            "all_spots_image": None, "accepted_spots_image": None,
-            "combined_image": None, "error": "Image not found",
-        }
+        return {**_error_base, "error": "Image not found"}
 
     img = resize_image(img, resize_percent)
 
@@ -683,9 +796,7 @@ def analyze_plate_and_spots(
         detected = detect_plate(img)
         if detected is None:
             return {
-                "plate_detected": False, "plate_bbox": None,
-                "plate_image": None, "all_spots": [],
-                "accepted_spots": [], "rejected_spots": [],
+                **_error_base,
                 "all_spots_image": img, "accepted_spots_image": img,
                 "combined_image": img, "error": "Plate not detected",
             }
@@ -693,34 +804,63 @@ def analyze_plate_and_spots(
 
     plate = img[py : py + ph, px : px + pw]
     gray_plate = cv2.cvtColor(plate, cv2.COLOR_BGR2GRAY)
+    # Apply the same CLAHE normalisation that detect_spots() uses internally.
+    # This ensures rejection checks see the same illumination-corrected image,
+    # preventing systematic over-rejection in darker plate regions.
+    gray_plate_eq = equalise_plate(gray_plate)
 
     # Ensemble spot detection
     spots = detect_spots(plate, min_spot_area, max_spot_area, min_circularity)
 
     # Pre-filter: remove non-spots (empty wells, faint/noise) BEFORE labeling.
     # These false detections would otherwise create phantom rows in the grid.
-    plate_bg_mean = _compute_plate_background_mean(gray_plate, spots)
-    spots = [s for s in spots
-             if not is_empty_well(gray_plate, s, plate_bg_mean)
-             and not is_too_faint(gray_plate, s, plate_bg_mean=plate_bg_mean)]
+    # Track filtered spots with reasons so downstream can audit removals.
+    plate_bg_mean = _compute_plate_background_mean(gray_plate_eq, spots)
+    pre_filtered = []
+    surviving = []
+    for s in spots:
+        if is_empty_well(gray_plate_eq, s, plate_bg_mean):
+            s["_reject_reason"] = "empty_well"
+            pre_filtered.append(s)
+        elif is_too_faint(gray_plate_eq, s, plate_bg_mean=plate_bg_mean):
+            s["_reject_reason"] = "too_faint"
+            pre_filtered.append(s)
+        else:
+            surviving.append(s)
+    spots = surviving
 
-    # Label only real spots — clean grid without phantom rows
+    # Label surviving spots — clean grid without phantom rows
     spots = sort_and_label(spots)
+    # Also label pre-filtered spots so their grid positions are traceable
+    pre_filtered = sort_and_label(pre_filtered)
 
-    # Defect classification: bubble/hole check on real spots
-    accepted, rejected = [], []
+    # Defect classification: 3-tier (clean / suspicious / defective)
+    accepted, suspicious, rejected = [], [], []
     for s in spots:
         r_check = compute_inspection_radius(s)
-        if has_bubble_or_hole(gray_plate, s, r_check, max_intensity_cv):
-            s["_reject_reason"] = "bubble_or_hole"
-            rejected.append(s)
-        else:
+        metrics = inspect_spot_defects(gray_plate_eq, s, r_check)
+        s["_defect_cv"] = metrics["cv_val"]
+        s["_defect_hole_pct"] = metrics["hole_pct"]
+
+        tier, reason = classify_spot_defect(
+            metrics,
+            cv_lower=max_intensity_cv,
+            cv_upper=suspicious_cv_upper,
+        )
+        if tier == "clean":
             accepted.append(s)
+        elif tier == "suspicious":
+            s["_reject_reason"] = f"suspicious: {reason}"
+            suspicious.append(s)
+        else:
+            s["_reject_reason"] = f"defective: {reason}"
+            rejected.append(s)
 
     # Draw
     all_img = draw_results(img, spots, px, py)
     acc_img = draw_results(img, accepted, px, py, accepted_only=True)
-    combined_img = draw_combined(img, accepted, rejected, px, py)
+    combined_img = draw_combined(img, accepted, rejected, px, py,
+                                 suspicious=suspicious)
 
     if save_dir:
         save_path = Path(save_dir)
@@ -735,7 +875,9 @@ def analyze_plate_and_spots(
         "plate_image": plate,
         "all_spots": spots,
         "accepted_spots": accepted,
+        "suspicious_spots": suspicious,
         "rejected_spots": rejected,
+        "pre_filtered_spots": pre_filtered,
         "all_spots_image": all_img,
         "accepted_spots_image": acc_img,
         "combined_image": combined_img,

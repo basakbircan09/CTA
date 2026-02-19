@@ -366,24 +366,30 @@ class SimpleStageApp(QMainWindow):
                 self.image_viewer.show_cv_image(output_img)
 
             accepted = len(result["accepted_spots"])
+            suspicious_spots = result.get("suspicious_spots", [])
+            suspicious = len(suspicious_spots)
             rejected = len(result["rejected_spots"])
             total = len(result["all_spots"])
 
             rejected_labels = [s.get("label", "?") for s in result["rejected_spots"]]
+            suspicious_labels = [s.get("label", "?") for s in suspicious_spots]
 
             msg = (
                 f"WE Detection Results:\n"
                 f"  Total spots: {total}\n"
                 f"  Accepted (no defects): {accepted}\n"
-                f"  Rejected (bubbles/holes): {rejected}\n"
+                f"  Suspicious (review needed): {suspicious}\n"
+                f"  Rejected (defective): {rejected}\n"
             )
+            if suspicious_labels:
+                msg += f"  Suspicious spots: {', '.join(suspicious_labels)}\n"
             if rejected_labels:
                 msg += f"  Defective spots: {', '.join(rejected_labels)}"
 
-            level = "info" if rejected == 0 else "warn"
+            level = "info" if (rejected == 0 and suspicious == 0) else "warn"
             self.log(msg, level)
 
-            if rejected == 0:
+            if rejected == 0 and suspicious == 0:
                 QMessageBox.information(self, "WE Detection", msg)
             else:
                 QMessageBox.warning(self, "WE Detection", msg)
