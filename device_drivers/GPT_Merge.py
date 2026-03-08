@@ -5,9 +5,9 @@ from typing import Dict, List, Tuple, Any
 
 # ================= DEFAULT SETTINGS =================
 # Detection tuning
-DEFAULT_MIN_SPOT_AREA = 300
+DEFAULT_MIN_SPOT_AREA = 100
 DEFAULT_MAX_SPOT_AREA = 15000
-DEFAULT_MIN_CIRCULARITY = 0.4
+DEFAULT_MIN_CIRCULARITY = 0.2
 
 # Bubble / hole detection
 DEFAULT_MAX_INTENSITY_CV = 0.3   # normalized non-uniformity threshold
