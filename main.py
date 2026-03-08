@@ -82,9 +82,10 @@ class _SpotView(QGraphicsView):
 class ManualSpotDialog(QDialog):
     """Interactive spot-picker dialog.
 
-    Left-click on the image to place a numbered spot marker.
-    Scroll wheel zooms in/out.  Undo removes the last marker.
-    Done saves an Excel file and closes.
+    Left-click to place numbered spot markers (S1, S2, ...).
+    Click 'Set Reference' then left-click to place the Reference marker.
+    Scroll wheel zooms in/out.  Undo removes the last regular spot.
+    Done saves an Excel file + annotated image and closes.
     """
 
     def __init__(self, image_bgr, save_dir: str, parent=None) -> None:
@@ -94,6 +95,9 @@ class ManualSpotDialog(QDialog):
 
         self._spots: list[dict] = []
         self._marker_items: list[tuple] = []   # (ellipse, text) per spot
+        self._ref_spot: dict | None = None
+        self._ref_items: tuple | None = None   # (ellipse, text) for reference
+        self._next_is_ref: bool = False
         self._save_dir = save_dir
 
         # Convert BGR ndarray to QPixmap
@@ -117,12 +121,16 @@ class ManualSpotDialog(QDialog):
 
         # Status and buttons
         self._lbl_count = QLabel("Spots marked: 0")
+        self._lbl_mode  = QLabel("Mode: Mark Spots  |  Reference: Not set")
+        self._lbl_mode.setStyleSheet("color: #888;")
 
-        btn_undo  = QPushButton("Undo Last")
-        btn_clear = QPushButton("Clear All")
-        btn_done  = QPushButton("Done")
+        self._btn_set_ref = QPushButton("Set Reference")
+        btn_undo          = QPushButton("Undo Last")
+        btn_clear         = QPushButton("Clear All")
+        btn_done          = QPushButton("Done")
         btn_done.setDefault(True)
 
+        self._btn_set_ref.clicked.connect(self._toggle_ref_mode)
         btn_undo.clicked.connect(self._undo)
         btn_clear.clicked.connect(self._clear)
         btn_done.clicked.connect(self._finish)
@@ -130,17 +138,23 @@ class ManualSpotDialog(QDialog):
         hint = QLabel("Scroll = zoom   |   Left-click = mark spot")
         hint.setStyleSheet("color: #888;")
 
-        bar = QHBoxLayout()
-        bar.addWidget(hint)
-        bar.addStretch()
-        bar.addWidget(self._lbl_count)
-        bar.addWidget(btn_undo)
-        bar.addWidget(btn_clear)
-        bar.addWidget(btn_done)
+        top_bar = QHBoxLayout()
+        top_bar.addWidget(hint)
+        top_bar.addStretch()
+        top_bar.addWidget(self._lbl_mode)
+
+        bot_bar = QHBoxLayout()
+        bot_bar.addWidget(self._lbl_count)
+        bot_bar.addStretch()
+        bot_bar.addWidget(self._btn_set_ref)
+        bot_bar.addWidget(btn_undo)
+        bot_bar.addWidget(btn_clear)
+        bot_bar.addWidget(btn_done)
 
         layout = QVBoxLayout(self)
         layout.addWidget(self._view, stretch=1)
-        layout.addLayout(bar)
+        layout.addLayout(top_bar)
+        layout.addLayout(bot_bar)
 
     # ------------------------------------------------------------------
     # Slot called by _SpotScene on left-click
@@ -150,7 +164,13 @@ class ManualSpotDialog(QDialog):
         rect = self._scene.sceneRect()
         if not rect.contains(sx, sy):
             return
-        self._add_spot(int(round(sx)), int(round(sy)))
+        x, y = int(round(sx)), int(round(sy))
+        if self._next_is_ref:
+            self._next_is_ref = False
+            self._btn_set_ref.setStyleSheet("")
+            self._add_reference(x, y)
+        else:
+            self._add_spot(x, y)
 
     def _add_spot(self, x: int, y: int) -> None:
         idx   = len(self._spots) + 1
@@ -171,6 +191,47 @@ class ManualSpotDialog(QDialog):
         self._marker_items.append((circle, txt))
         self._lbl_count.setText(f"Spots marked: {idx}")
 
+    def _add_reference(self, x: int, y: int) -> None:
+        # Remove previous reference marker if any
+        if self._ref_items:
+            for item in self._ref_items:
+                self._scene.removeItem(item)
+            self._ref_items = None
+
+        self._ref_spot = {"label": "Reference", "x": x, "y": y}
+
+        r    = 12
+        pen  = QPen(QColor(255, 140, 0), 2)
+        fill = QBrush(QColor(255, 140, 0, 100))
+        circle = self._scene.addEllipse(x - r, y - r, 2 * r, 2 * r, pen, fill)
+
+        txt = self._scene.addText("REF")
+        txt.setDefaultTextColor(QColor(255, 140, 0))
+        fnt = QFont("Arial", 11, QFont.Weight.Bold)
+        txt.setFont(fnt)
+        txt.setPos(x + r + 2, y - 14)
+
+        self._ref_items = (circle, txt)
+        self._update_mode_label()
+
+    def _toggle_ref_mode(self) -> None:
+        self._next_is_ref = not self._next_is_ref
+        if self._next_is_ref:
+            self._btn_set_ref.setStyleSheet(
+                "background-color: #ff8800; color: white; font-weight: bold;"
+            )
+            self._lbl_mode.setText("Mode: PLACE REFERENCE - click on image")
+            self._lbl_mode.setStyleSheet("color: #ff8800; font-weight: bold;")
+        else:
+            self._btn_set_ref.setStyleSheet("")
+            self._update_mode_label()
+
+    def _update_mode_label(self) -> None:
+        ref_status = "Set" if self._ref_spot else "Not set"
+        self._lbl_mode.setText(f"Mode: Mark Spots  |  Reference: {ref_status}")
+        self._lbl_mode.setStyleSheet("color: #888;" if not self._ref_spot
+                                     else "color: #ff8800;")
+
     def _undo(self) -> None:
         if not self._spots:
             return
@@ -186,14 +247,23 @@ class ManualSpotDialog(QDialog):
             self._scene.removeItem(txt)
         self._spots.clear()
         self._marker_items.clear()
+
+        if self._ref_items:
+            for item in self._ref_items:
+                self._scene.removeItem(item)
+            self._ref_items = None
+        self._ref_spot = None
+
+        self._next_is_ref = False
+        self._btn_set_ref.setStyleSheet("")
         self._lbl_count.setText("Spots marked: 0")
+        self._update_mode_label()
 
     def _finish(self) -> None:
-        excel_path = None
-        if self._spots:
-            excel_path = self._save_excel()
+        has_data = bool(self._spots or self._ref_spot)
+        self._excel_path = self._save_excel() if has_data else None
+        self._image_path = self._save_image() if has_data else None
         self.accept()
-        self._excel_path = excel_path
 
     def _save_excel(self) -> str:
         out = Path(self._save_dir)
@@ -202,17 +272,43 @@ class ManualSpotDialog(QDialog):
         ws = wb.active
         ws.title = "Manual Spots"
         ws.append(["Label", "X pixel", "Y pixel"])
+        # Reference row first
+        if self._ref_spot:
+            ws.append([self._ref_spot["label"],
+                        self._ref_spot["x"],
+                        self._ref_spot["y"]])
         for s in self._spots:
             ws.append([s["label"], s["x"], s["y"]])
         path = str(out / "manual_spots.xlsx")
         wb.save(path)
         return path
 
+    def _save_image(self) -> str:
+        """Render the scene (image + all markers) to a PNG file."""
+        out = Path(self._save_dir)
+        out.mkdir(parents=True, exist_ok=True)
+        rect    = self._scene.sceneRect()
+        img_out = QImage(int(rect.width()), int(rect.height()),
+                         QImage.Format_RGB888)
+        img_out.fill(Qt.black)
+        painter = QPainter(img_out)
+        self._scene.render(painter)
+        painter.end()
+        path = str(out / "manual_spots_image.png")
+        img_out.save(path)
+        return path
+
     def get_spots(self) -> list:
         return list(self._spots)
 
+    def get_reference(self) -> dict | None:
+        return self._ref_spot
+
     def excel_path(self) -> str | None:
         return getattr(self, "_excel_path", None)
+
+    def image_path(self) -> str | None:
+        return getattr(self, "_image_path", None)
 
 
 # ---------------------------------------------------------------------------
@@ -791,14 +887,21 @@ class SimpleStageApp(QMainWindow):
         dlg      = ManualSpotDialog(img, save_dir, parent=self)
 
         if dlg.exec() == QDialog.Accepted:
+            ref   = dlg.get_reference()
             spots = dlg.get_spots()
-            if spots:
+
+            if ref or spots:
+                if ref:
+                    self.log(f"  Reference: X={ref['x']}  Y={ref['y']}", "info")
                 self.log(f"Manual spots saved: {len(spots)} spot(s)", "info")
                 for s in spots:
                     self.log(f"  {s['label']}: X={s['x']}  Y={s['y']}", "info")
                 ep = dlg.excel_path()
                 if ep:
-                    self.log(f"Excel saved: {ep}", "info")
+                    self.log(f"Excel saved:  {ep}", "info")
+                ip = dlg.image_path()
+                if ip:
+                    self.log(f"Image saved: {ip}", "info")
             else:
                 self.log("Manual spot detect: no spots marked.", "warn")
 
