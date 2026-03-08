@@ -1,6 +1,7 @@
 import os
 import sys
 from pathlib import Path
+from openpyxl import Workbook
 
 # Set up project root and paths FIRST
 PROJECT_ROOT = Path(__file__).parent
@@ -14,15 +15,17 @@ from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget,
     QHBoxLayout, QVBoxLayout, QPushButton, QLabel, QMessageBox, QTextEdit,
     QFileDialog, QGroupBox, QGridLayout, QDoubleSpinBox, QComboBox,
+    QDialog, QGraphicsView, QGraphicsScene,
 )
-from PySide6.QtGui import QPixmap, QImage
-from PySide6.QtCore import Qt, QTimer, QThread, Signal
+from PySide6.QtGui import (
+    QPixmap, QImage, QPen, QBrush, QColor, QFont, QPainter,
+)
+from PySide6.QtCore import Qt, QTimer, QThread, Signal, QRectF
 
 # Hardware / vision imports
 from device_drivers.PI_Control_System.core.models import Axis, Position
 from device_drivers.PI_Control_System.app_factory import create_services
 from device_drivers.thorlabs_camera_wrapper import ThorlabsCamera
-from device_drivers.plate_auto_adjuster import auto_adjust_plate
 from device_drivers.GPT_Merge import analyze_plate_and_spots
 from device_drivers.spot_analysis.pipeline import run_spot_analysis
 from device_drivers.image_utils import load_image, save_image, bgr_to_rgb
@@ -33,14 +36,9 @@ from device_drivers.image_utils import load_image, save_image, bgr_to_rgb
 # ---------------------------------------------------------------------------
 
 class SpotAnalysisWorker(QThread):
-    """Run run_spot_analysis() in a background thread.
-
-    Signals:
-        finished(dict)  – emitted with the full result dict on success
-        error(str)      – emitted with an error message on failure
-    """
+    """Run run_spot_analysis() in a background thread."""
     finished = Signal(dict)
-    error = Signal(str)
+    error    = Signal(str)
 
     def __init__(self, image_path: str, output_dir: str) -> None:
         super().__init__()
@@ -60,6 +58,164 @@ class SpotAnalysisWorker(QThread):
 
 
 # ---------------------------------------------------------------------------
+# Manual spot picker – Qt scene that emits left-click coordinates
+# ---------------------------------------------------------------------------
+
+class _SpotScene(QGraphicsScene):
+    spot_clicked = Signal(float, float)
+
+    def mousePressEvent(self, event) -> None:
+        if event.button() == Qt.MouseButton.LeftButton:
+            p = event.scenePos()
+            self.spot_clicked.emit(p.x(), p.y())
+        super().mousePressEvent(event)
+
+
+class _SpotView(QGraphicsView):
+    """Graphics view with scroll-wheel zoom."""
+
+    def wheelEvent(self, event) -> None:
+        factor = 1.25 if event.angleDelta().y() > 0 else 0.8
+        self.scale(factor, factor)
+
+
+class ManualSpotDialog(QDialog):
+    """Interactive spot-picker dialog.
+
+    Left-click on the image to place a numbered spot marker.
+    Scroll wheel zooms in/out.  Undo removes the last marker.
+    Done saves an Excel file and closes.
+    """
+
+    def __init__(self, image_bgr, save_dir: str, parent=None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Manual Spot Detect  -  left-click to mark spots")
+        self.resize(1100, 750)
+
+        self._spots: list[dict] = []
+        self._marker_items: list[tuple] = []   # (ellipse, text) per spot
+        self._save_dir = save_dir
+
+        # Convert BGR ndarray to QPixmap
+        img_rgb = bgr_to_rgb(image_bgr)
+        h, w, ch = img_rgb.shape
+        qimg    = QImage(img_rgb.data, w, h, ch * w, QImage.Format_RGB888)
+        pixmap  = QPixmap.fromImage(qimg)
+
+        # Scene
+        self._scene = _SpotScene(self)
+        self._scene.addPixmap(pixmap)
+        self._scene.setSceneRect(QRectF(0, 0, w, h))
+        self._scene.spot_clicked.connect(self._on_scene_click)
+
+        # View
+        self._view = _SpotView(self._scene, self)
+        self._view.setRenderHint(QPainter.Antialiasing)
+        self._view.setTransformationAnchor(QGraphicsView.AnchorUnderMouse)
+        self._view.setResizeAnchor(QGraphicsView.AnchorUnderMouse)
+        self._view.fitInView(self._scene.sceneRect(), Qt.KeepAspectRatio)
+
+        # Status and buttons
+        self._lbl_count = QLabel("Spots marked: 0")
+
+        btn_undo  = QPushButton("Undo Last")
+        btn_clear = QPushButton("Clear All")
+        btn_done  = QPushButton("Done")
+        btn_done.setDefault(True)
+
+        btn_undo.clicked.connect(self._undo)
+        btn_clear.clicked.connect(self._clear)
+        btn_done.clicked.connect(self._finish)
+
+        hint = QLabel("Scroll = zoom   |   Left-click = mark spot")
+        hint.setStyleSheet("color: #888;")
+
+        bar = QHBoxLayout()
+        bar.addWidget(hint)
+        bar.addStretch()
+        bar.addWidget(self._lbl_count)
+        bar.addWidget(btn_undo)
+        bar.addWidget(btn_clear)
+        bar.addWidget(btn_done)
+
+        layout = QVBoxLayout(self)
+        layout.addWidget(self._view, stretch=1)
+        layout.addLayout(bar)
+
+    # ------------------------------------------------------------------
+    # Slot called by _SpotScene on left-click
+    # ------------------------------------------------------------------
+
+    def _on_scene_click(self, sx: float, sy: float) -> None:
+        rect = self._scene.sceneRect()
+        if not rect.contains(sx, sy):
+            return
+        self._add_spot(int(round(sx)), int(round(sy)))
+
+    def _add_spot(self, x: int, y: int) -> None:
+        idx   = len(self._spots) + 1
+        label = f"S{idx}"
+        self._spots.append({"label": label, "x": x, "y": y})
+
+        r    = 10
+        pen  = QPen(QColor(0, 220, 0), 2)
+        fill = QBrush(QColor(0, 220, 0, 90))
+        circle = self._scene.addEllipse(x - r, y - r, 2 * r, 2 * r, pen, fill)
+
+        txt = self._scene.addText(label)
+        txt.setDefaultTextColor(QColor(0, 255, 0))
+        fnt = QFont("Arial", 11, QFont.Weight.Bold)
+        txt.setFont(fnt)
+        txt.setPos(x + r + 2, y - 14)
+
+        self._marker_items.append((circle, txt))
+        self._lbl_count.setText(f"Spots marked: {idx}")
+
+    def _undo(self) -> None:
+        if not self._spots:
+            return
+        self._spots.pop()
+        circle, txt = self._marker_items.pop()
+        self._scene.removeItem(circle)
+        self._scene.removeItem(txt)
+        self._lbl_count.setText(f"Spots marked: {len(self._spots)}")
+
+    def _clear(self) -> None:
+        for circle, txt in self._marker_items:
+            self._scene.removeItem(circle)
+            self._scene.removeItem(txt)
+        self._spots.clear()
+        self._marker_items.clear()
+        self._lbl_count.setText("Spots marked: 0")
+
+    def _finish(self) -> None:
+        excel_path = None
+        if self._spots:
+            excel_path = self._save_excel()
+        self.accept()
+        self._excel_path = excel_path
+
+    def _save_excel(self) -> str:
+        out = Path(self._save_dir)
+        out.mkdir(parents=True, exist_ok=True)
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Manual Spots"
+        ws.append(["Label", "X pixel", "Y pixel"])
+        for s in self._spots:
+            ws.append([s["label"], s["x"], s["y"]])
+        path = str(out / "manual_spots.xlsx")
+        wb.save(path)
+        return path
+
+    def get_spots(self) -> list:
+        return list(self._spots)
+
+    def excel_path(self) -> str | None:
+        return getattr(self, "_excel_path", None)
+
+
+# ---------------------------------------------------------------------------
 # Main application window
 # ---------------------------------------------------------------------------
 
@@ -69,12 +225,12 @@ class SimpleStageApp(QMainWindow):
 
         # --- PI services ---
         event_bus, connection_service, motion_service, config = create_services(use_mock=use_mock)
-        self.event_bus = event_bus
+        self.event_bus          = event_bus
         self.connection_service = connection_service
-        self.motion_service = motion_service
+        self.motion_service     = motion_service
 
         # --- Camera ---
-        TL_DLL_DIR = r"C:\Program Files\Thorlabs\ThorImageCAM\Bin"
+        TL_DLL_DIR  = r"C:\Program Files\Thorlabs\ThorImageCAM\Bin"
         self.camera = ThorlabsCamera(dll_dir=TL_DLL_DIR)
         self.live_timer = QTimer(self)
         self.live_timer.timeout.connect(self._update_live_view)
@@ -91,10 +247,10 @@ class SimpleStageApp(QMainWindow):
         # ================================================================
         # Window layout
         # ================================================================
-        self.setWindowTitle("CTA – Stage + Plate Check")
+        self.setWindowTitle("CTA - Stage + Plate Check")
         self.resize(1400, 850)
 
-        central = QWidget()
+        central      = QWidget()
         outer_layout = QVBoxLayout(central)
         outer_layout.setContentsMargins(8, 8, 8, 8)
         outer_layout.setSpacing(8)
@@ -104,7 +260,7 @@ class SimpleStageApp(QMainWindow):
         toolbar_layout = QHBoxLayout()
         toolbar_layout.setSpacing(6)
 
-        self.status_label = QLabel("● DISCONNECTED")
+        self.status_label = QLabel("DISCONNECTED")
         self.status_label.setStyleSheet("""
             QLabel {
                 color: #ff6b6b;
@@ -125,20 +281,21 @@ class SimpleStageApp(QMainWindow):
                 border-radius: 4px;
                 min-width: 80px;
             }
-            QPushButton:hover  { background-color: #4a4a4a; }
+            QPushButton:hover   { background-color: #4a4a4a; }
             QPushButton:pressed { background-color: #3a3a3a; }
         """
 
-        self.btn_connect  = QPushButton("Connect")
-        self.btn_init     = QPushButton("Initialize")
-        self.btn_cam_start = QPushButton("Camera")
-        self.btn_capture  = QPushButton("Capture")
-        self.btn_plate    = QPushButton("Plate Detect")
-        self.btn_adjust   = QPushButton("Auto Adjust")
-        self.btn_we       = QPushButton("WE Detect")
+        self.btn_connect      = QPushButton("Connect")
+        self.btn_init         = QPushButton("Initialize")
+        self.btn_cam_start    = QPushButton("Camera")
+        self.btn_capture      = QPushButton("Capture")
+        self.btn_plate        = QPushButton("Plate Detect")
+        self.btn_we           = QPushButton("WE Detect")
+        self.btn_manual_spot  = QPushButton("Manual Spot Detect")
 
         for btn in [self.btn_connect, self.btn_init, self.btn_cam_start,
-                    self.btn_capture, self.btn_plate, self.btn_adjust, self.btn_we]:
+                    self.btn_capture, self.btn_plate, self.btn_we,
+                    self.btn_manual_spot]:
             btn.setStyleSheet(btn_style)
             toolbar_layout.addWidget(btn)
 
@@ -155,7 +312,7 @@ class SimpleStageApp(QMainWindow):
         middle_layout.addLayout(settings_panel, stretch=1)
 
         # Camera settings group
-        cam_group = QGroupBox("Camera Settings")
+        cam_group  = QGroupBox("Camera Settings")
         cam_group.setStyleSheet("QGroupBox { font-weight: bold; }")
         cam_layout = QGridLayout(cam_group)
         cam_layout.setSpacing(8)
@@ -212,7 +369,7 @@ class SimpleStageApp(QMainWindow):
         settings_panel.addWidget(cam_group)
 
         # Stage control group
-        stage_group = QGroupBox("Stage Control")
+        stage_group  = QGroupBox("Stage Control")
         stage_group.setStyleSheet("QGroupBox { font-weight: bold; }")
         stage_layout = QVBoxLayout(stage_group)
         stage_layout.setSpacing(10)
@@ -239,12 +396,12 @@ class SimpleStageApp(QMainWindow):
         self.spin_step.setMaximumWidth(80)
         step_layout.addWidget(self.spin_step)
         step_layout.addStretch()
-        btn_refresh = QPushButton("↻ Refresh")
+        btn_refresh = QPushButton("Refresh")
         btn_refresh.clicked.connect(self.on_refresh_position)
         step_layout.addWidget(btn_refresh)
         stage_layout.addLayout(step_layout)
 
-        jog_grid = QGridLayout()
+        jog_grid     = QGridLayout()
         jog_grid.setSpacing(6)
         jog_btn_style = """
             QPushButton {
@@ -254,15 +411,17 @@ class SimpleStageApp(QMainWindow):
                 min-height: 35px;
             }
         """
-        for row_idx, (axis, label) in enumerate([(Axis.X, "X"), (Axis.Y, "Y"), (Axis.Z, "Z")]):
-            lbl = QLabel(f"{label}:")
-            lbl.setStyleSheet("font-weight: bold; font-size: 14px;")
-            jog_grid.addWidget(lbl, row_idx, 0)
+        for row_idx, (axis, lbl) in enumerate([(Axis.X, "X"), (Axis.Y, "Y"), (Axis.Z, "Z")]):
+            axis_lbl = QLabel(f"{lbl}:")
+            axis_lbl.setStyleSheet("font-weight: bold; font-size: 14px;")
+            jog_grid.addWidget(axis_lbl, row_idx, 0)
             for col_idx, direction in enumerate([-1, 1]):
-                symbol = "−" if direction == -1 else "+"
-                btn = QPushButton(symbol)
+                symbol = "-" if direction == -1 else "+"
+                btn    = QPushButton(symbol)
                 btn.setStyleSheet(jog_btn_style)
-                btn.clicked.connect(lambda checked=False, a=axis, d=direction: self.on_jog_axis(a, d))
+                btn.clicked.connect(
+                    lambda checked=False, a=axis, d=direction: self.on_jog_axis(a, d)
+                )
                 jog_grid.addWidget(btn, row_idx, col_idx + 1)
         jog_grid.setColumnStretch(3, 1)
         stage_layout.addLayout(jog_grid)
@@ -310,7 +469,7 @@ class SimpleStageApp(QMainWindow):
         middle_layout.addWidget(self.image_label, stretch=2)
 
         # ---- Log panel ----
-        log_group = QGroupBox("Log")
+        log_group  = QGroupBox("Log")
         log_group.setStyleSheet("QGroupBox { font-weight: bold; }")
         log_layout = QVBoxLayout(log_group)
         log_layout.setContentsMargins(4, 4, 4, 4)
@@ -335,8 +494,8 @@ class SimpleStageApp(QMainWindow):
         self.btn_cam_start.clicked.connect(self.on_cam_start_clicked)
         self.btn_capture.clicked.connect(self.on_capture_clicked)
         self.btn_plate.clicked.connect(self.on_plate_clicked)
-        self.btn_adjust.clicked.connect(self.on_adjust_clicked)
         self.btn_we.clicked.connect(self.on_we_clicked)
+        self.btn_manual_spot.clicked.connect(self.on_manual_spot_clicked)
 
     # ================================================================
     # Helpers
@@ -354,7 +513,7 @@ class SimpleStageApp(QMainWindow):
             "error":        "#ff6b6b",
         }
         color = colors.get(state, "#ff6b6b")
-        self.status_label.setText(f"● {status}")
+        self.status_label.setText(status)
         self.status_label.setStyleSheet(f"""
             QLabel {{
                 color: {color};
@@ -367,11 +526,10 @@ class SimpleStageApp(QMainWindow):
         """)
 
     def _show_image(self, img) -> None:
-        """Display a BGR ndarray in the image panel."""
         img_rgb = bgr_to_rgb(img)
         h, w, ch = img_rgb.shape
         qimg = QImage(img_rgb.data, w, h, ch * w, QImage.Format_RGB888)
-        pix = QPixmap.fromImage(qimg).scaled(
+        pix  = QPixmap.fromImage(qimg).scaled(
             self.image_label.width(),
             self.image_label.height(),
             Qt.KeepAspectRatio,
@@ -399,7 +557,7 @@ class SimpleStageApp(QMainWindow):
             self.log("Stage: connecting to all controllers...", "info")
             self.connection_service.connect().result(timeout=30)
             self.set_status("CONNECTED", "connecting")
-            self.log("Stage: all controllers connected successfully.", "info")
+            self.log("Stage: all controllers connected.", "info")
         except Exception as exc:
             self.set_status("ERROR", "error")
             self.log(f"Stage connect error: {exc}", "error")
@@ -413,7 +571,7 @@ class SimpleStageApp(QMainWindow):
                 return
 
             self.set_status("INITIALIZING...", "connecting")
-            self.log("Stage: initializing and referencing all axes...", "info")
+            self.log("Stage: referencing all axes...", "info")
             self.connection_service.initialize().result(timeout=120)
 
             self.set_status("PARKING...", "connecting")
@@ -421,7 +579,7 @@ class SimpleStageApp(QMainWindow):
             self.motion_service.move_to_position_safe_z(self.park_position).result(timeout=60)
 
             self.set_status("READY", "ready")
-            self.log(f"Stage initialized and parked at {self.park_position}.", "info")
+            self.log(f"Stage ready. Parked at {self.park_position}.", "info")
         except Exception as exc:
             self.set_status("ERROR", "error")
             self.log(f"Initialize error: {exc}", "error")
@@ -434,7 +592,7 @@ class SimpleStageApp(QMainWindow):
                     self.camera.connect()
                 self.live_timer.start(100)
                 self.live_running = True
-                self.btn_cam_start.setText("Camera Stop (live)")
+                self.btn_cam_start.setText("Camera Stop")
                 self.log("Camera live view started.", "info")
             except Exception as exc:
                 self.log(f"Live start error: {exc}", "error")
@@ -445,7 +603,6 @@ class SimpleStageApp(QMainWindow):
             self.log("Camera live view stopped.", "info")
 
     def on_capture_clicked(self) -> None:
-        """Capture a frame from the camera, or load a file if no camera."""
         camera_available = self.camera.is_connected
         if not camera_available:
             try:
@@ -464,18 +621,17 @@ class SimpleStageApp(QMainWindow):
             save_dir = PROJECT_ROOT / "artifacts" / "captures"
             save_dir.mkdir(parents=True, exist_ok=True)
 
-            exp  = self.spin_exposure.value()
-            gain = self.spin_gain.value()
-            r, g, b = self.spin_wb_r.value(), self.spin_wb_g.value(), self.spin_wb_b.value()
-
-            base = f"Photo_{exp:.1f}_{gain:.1f}_{r:.2f}_{g:.2f}_{b:.2f}"
-            filename = save_dir / f"{base}.png"
-            counter = 1
+            exp        = self.spin_exposure.value()
+            gain       = self.spin_gain.value()
+            r, g, b    = self.spin_wb_r.value(), self.spin_wb_g.value(), self.spin_wb_b.value()
+            base       = f"Photo_{exp:.1f}_{gain:.1f}_{r:.2f}_{g:.2f}_{b:.2f}"
+            filename   = save_dir / f"{base}.png"
+            counter    = 1
             while filename.exists():
                 filename = save_dir / f"{base}_{counter}.png"
                 counter += 1
 
-            frame = self.camera.save_frame(str(filename))
+            frame                = self.camera.save_frame(str(filename))
             self.last_image_path = str(filename)
             self._show_image(frame)
             self.log(f"Captured: {filename}", "info")
@@ -484,29 +640,28 @@ class SimpleStageApp(QMainWindow):
             QMessageBox.critical(self, "Capture error", str(exc))
 
     def _capture_from_file(self) -> None:
-        self.log("Camera not connected – select an image file.", "warn")
+        self.log("Camera not connected - select an image file.", "warn")
         path = self._pick_image_file("Select image (no camera connected)")
         if not path:
             self.log("Capture cancelled.", "warn")
             return
         img = load_image(path)
         if img is None:
-            self.log(f"Could not load image: {path}", "error")
+            self.log(f"Could not load: {path}", "error")
             QMessageBox.critical(self, "Load error", f"Cannot read image:\n{path}")
             return
         self.last_image_path = path
         self._show_image(img)
-        self.log(f"Loaded image from file: {path}", "info")
+        self.log(f"Loaded image: {path}", "info")
 
     def on_plate_clicked(self) -> None:
-        """Detect the plate in the last captured image."""
         image_path = self.last_image_path
         if not image_path:
             image_path = self._pick_image_file("Select image for plate detection")
             if not image_path:
                 self.log("Plate detection cancelled.", "warn")
                 return
-            self.log(f"Using user-selected image: {image_path}", "info")
+            self.log(f"Using selected image: {image_path}", "info")
 
         try:
             save_dir = PROJECT_ROOT / "artifacts" / "plate_detection"
@@ -526,60 +681,25 @@ class SimpleStageApp(QMainWindow):
                 QMessageBox.warning(self, "Plate detection", msg)
                 return
 
-            plate_img  = result["plate_image"]
-            plate_path = str(save_dir / "plate.png")
+            plate_img        = result["plate_image"]
+            plate_path       = str(save_dir / "plate.png")
             save_image(plate_path, plate_img)
             self.last_plate_path = plate_path
 
             self._show_image(plate_img)
             bbox = result["plate_bbox"]
-            self.log(f"Plate detected at {bbox}. Saved to: {plate_path}", "info")
+            self.log(f"Plate detected at {bbox}. Saved: {plate_path}", "info")
             QMessageBox.information(self, "Plate detection",
                 f"Plate detected at {bbox}\nSaved to: {plate_path}")
         except Exception as exc:
             self.log(f"Plate detection error: {exc}", "error")
             QMessageBox.critical(self, "Plate detection error", str(exc))
 
-    def on_adjust_clicked(self) -> None:
-        """Run the closed-loop auto-adjust feedback loop."""
-        if not self._is_stage_ready():
-            QMessageBox.warning(self, "Stage Not Ready",
-                "Please connect and initialize the stage first.")
-            return
-        try:
-            if not self.camera.is_connected:
-                self.camera.connect()
-
-            save_dir = PROJECT_ROOT / "artifacts" / "auto_adjust"
-            fully, final_hint, steps_log = auto_adjust_plate(
-                motion_service=self.motion_service,
-                camera=self.camera,
-                save_dir=save_dir,
-                step_mm=5.0,
-                max_iterations=10,
-            )
-
-            for line in steps_log:
-                self.log(line, "info")
-
-            if fully:
-                self.log(f"Auto-adjust succeeded. hint={final_hint}", "info")
-                QMessageBox.information(self, "Auto Adjust",
-                    f"Plate centred successfully. hint={final_hint}")
-            else:
-                self.log(f"Auto-adjust did not fully succeed. hint={final_hint}", "warn")
-                QMessageBox.warning(self, "Auto Adjust",
-                    f"Could not fully centre plate. hint={final_hint}")
-        except Exception as exc:
-            self.log(f"Auto adjust error: {exc}", "error")
-            QMessageBox.critical(self, "Auto Adjust error", str(exc))
-
     def on_we_clicked(self) -> None:
-        """Start the WE spot analysis pipeline in a background thread."""
         image_path = self.last_plate_path
 
         if not image_path:
-            self.log("No plate detected yet. Select an image manually?", "warn")
+            self.log("No plate image available. Select manually?", "warn")
             reply = QMessageBox.question(
                 self, "WE Detection",
                 "No plate image available.\n\nSelect an image manually?",
@@ -598,7 +718,7 @@ class SimpleStageApp(QMainWindow):
         save_dir = str(PROJECT_ROOT / "artifacts" / "we_detection")
 
         self.btn_we.setEnabled(False)
-        self.btn_we.setText("WE Detect (running…)")
+        self.btn_we.setText("WE Detect (running...)")
 
         self._we_worker = SpotAnalysisWorker(image_path, save_dir)
         self._we_worker.finished.connect(self._on_we_finished)
@@ -606,7 +726,6 @@ class SimpleStageApp(QMainWindow):
         self._we_worker.start()
 
     def _on_we_finished(self, result: dict) -> None:
-        """Called on the UI thread when SpotAnalysisWorker completes."""
         self.btn_we.setEnabled(True)
         self.btn_we.setText("WE Detect")
 
@@ -614,13 +733,13 @@ class SimpleStageApp(QMainWindow):
         if overlay is not None:
             self._show_image(overlay)
 
-        total    = len(result["all_spots"])
-        accepted = len(result["accepted_spots"])
-        rejected = len(result["rejected_spots"])
+        total           = len(result["all_spots"])
+        accepted        = len(result["accepted_spots"])
+        rejected        = len(result["rejected_spots"])
         rejected_labels = result.get("rejected_labels", [])
         missing_spots   = result.get("missing_spots", [])
         excel_path      = result.get("excel_path")
-        non_fatal_error = result.get("error")
+        err             = result.get("error")
 
         self.log(f"Detected spots:  {total}", "info")
         self.log(f"Accepted:        {accepted}", "info")
@@ -632,21 +751,21 @@ class SimpleStageApp(QMainWindow):
             self.log(f"Missing spots:   {', '.join(missing_spots)}", "warn")
         if excel_path:
             self.log(f"Excel saved:     {excel_path}", "info")
-        if non_fatal_error:
-            self.log(f"Warning: {non_fatal_error}", "warn")
+        if err:
+            self.log(f"Warning: {err}", "warn")
 
         issues: list[str] = []
         if rejected:
-            issues.append(f"Rejected: {rejected} spot(s) – {', '.join(rejected_labels)}")
+            issues.append(f"Rejected: {rejected} spot(s) - {', '.join(rejected_labels)}")
         if missing_spots:
             issues.append(f"Missing: {', '.join(missing_spots)}")
 
         if not issues:
             QMessageBox.information(self, "WE Detection",
-                f"All {accepted} spot(s) accepted.\nNo defects detected.")
+                f"All {accepted} spot(s) accepted. No defects detected.")
         else:
             QMessageBox.warning(self, "WE Detection",
-                f"Detected: {total}  |  Accepted: {accepted}  |  Rejected: {rejected}\n"
+                f"Detected: {total}  Accepted: {accepted}  Rejected: {rejected}\n"
                 + "\n".join(issues))
 
     def _on_we_error(self, error_msg: str) -> None:
@@ -654,6 +773,34 @@ class SimpleStageApp(QMainWindow):
         self.btn_we.setText("WE Detect")
         self.log(f"WE detection error: {error_msg}", "error")
         QMessageBox.critical(self, "WE Detection Error", error_msg)
+
+    def on_manual_spot_clicked(self) -> None:
+        """Open the interactive spot-picker dialog on the current image."""
+        image_path = self.last_image_path or self.last_plate_path
+        if not image_path:
+            image_path = self._pick_image_file("Select image for manual spot marking")
+            if not image_path:
+                return
+
+        img = load_image(image_path)
+        if img is None:
+            QMessageBox.critical(self, "Load error", f"Cannot load image:\n{image_path}")
+            return
+
+        save_dir = str(PROJECT_ROOT / "artifacts" / "manual_spots")
+        dlg      = ManualSpotDialog(img, save_dir, parent=self)
+
+        if dlg.exec() == QDialog.Accepted:
+            spots = dlg.get_spots()
+            if spots:
+                self.log(f"Manual spots saved: {len(spots)} spot(s)", "info")
+                for s in spots:
+                    self.log(f"  {s['label']}: X={s['x']}  Y={s['y']}", "info")
+                ep = dlg.excel_path()
+                if ep:
+                    self.log(f"Excel saved: {ep}", "info")
+            else:
+                self.log("Manual spot detect: no spots marked.", "warn")
 
     # ================================================================
     # Camera settings handlers
@@ -683,10 +830,10 @@ class SimpleStageApp(QMainWindow):
 
     def on_wb_preset_changed(self, preset: str) -> None:
         presets = {
-            "Default":     (1.0, 1.0, 1.0),
-            "Warm":        (1.0, 0.9, 0.7),
-            "Cool":        (0.9, 1.0, 1.2),
-            "Reduce NIR":  (0.6, 0.8, 1.0),
+            "Default":    (1.0, 1.0, 1.0),
+            "Warm":       (1.0, 0.9, 0.7),
+            "Cool":       (0.9, 1.0, 1.2),
+            "Reduce NIR": (0.6, 0.8, 1.0),
         }
         if preset in presets:
             r, g, b = presets[preset]
@@ -728,7 +875,7 @@ class SimpleStageApp(QMainWindow):
             return
         try:
             step = self.spin_step.value() * direction
-            self.log(f"Jogging {axis.value} by {step:+.1f} mm…", "info")
+            self.log(f"Jogging {axis.value} by {step:+.1f} mm...", "info")
             self.motion_service.move_axis_relative(axis, step).result(timeout=30)
             self.on_refresh_position()
         except Exception as exc:
@@ -745,7 +892,7 @@ class SimpleStageApp(QMainWindow):
                 y=self.spin_goto_y.value(),
                 z=self.spin_goto_z.value(),
             )
-            self.log(f"Moving to X={target.x:.2f} Y={target.y:.2f} Z={target.z:.2f}…", "info")
+            self.log(f"Moving to X={target.x:.2f} Y={target.y:.2f} Z={target.z:.2f}...", "info")
             self.motion_service.move_to_position_safe_z(target).result(timeout=60)
             self.on_refresh_position()
             self.log("Move complete.", "info")
@@ -771,7 +918,7 @@ class SimpleStageApp(QMainWindow):
     # ================================================================
 
     def closeEvent(self, event) -> None:
-        self.log("Closing – disconnecting hardware…", "info")
+        self.log("Closing - disconnecting hardware...", "info")
 
         if self.live_running:
             self.live_timer.stop()
@@ -800,7 +947,7 @@ class SimpleStageApp(QMainWindow):
 # ---------------------------------------------------------------------------
 
 def main() -> None:
-    app = QApplication(sys.argv)
+    app    = QApplication(sys.argv)
     window = SimpleStageApp(use_mock=False)
     window.show()
     sys.exit(app.exec())
