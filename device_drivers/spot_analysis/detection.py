@@ -65,27 +65,36 @@ def detect_spots(image: np.ndarray, debug: dict = None):
 
     blur = cv2.GaussianBlur(norm, (5, 5), 0)
 
+    blocksize = DEFAULT_THRESH_BLOCKSIZE if DEFAULT_THRESH_BLOCKSIZE % 2 == 1 else DEFAULT_THRESH_BLOCKSIZE + 1
     thresh = cv2.adaptiveThreshold(
         blur, 255,
         cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
         cv2.THRESH_BINARY_INV,
-        DEFAULT_THRESH_BLOCKSIZE,
+        blocksize,
         DEFAULT_THRESH_C,
     )
 
-    opened = cv2.morphologyEx(
-        thresh,
-        cv2.MORPH_OPEN,
-        np.ones((DEFAULT_OPEN_KERNEL, DEFAULT_OPEN_KERNEL), np.uint8),
-    )
-    closed = cv2.morphologyEx(
-        opened,
-        cv2.MORPH_CLOSE,
-        np.ones((DEFAULT_CLOSE_KERNEL, DEFAULT_CLOSE_KERNEL), np.uint8),
-    )
+    if DEFAULT_OPEN_KERNEL > 0:
+        opened = cv2.morphologyEx(
+            thresh,
+            cv2.MORPH_OPEN,
+            np.ones((DEFAULT_OPEN_KERNEL, DEFAULT_OPEN_KERNEL), np.uint8),
+        )
+    else:
+        opened = thresh.copy()
+
+    if DEFAULT_CLOSE_KERNEL > 0:
+        closed = cv2.morphologyEx(
+            opened,
+            cv2.MORPH_CLOSE,
+            np.ones((DEFAULT_CLOSE_KERNEL, DEFAULT_CLOSE_KERNEL), np.uint8),
+        )
+    else:
+        closed = opened.copy()
 
     if debug is not None:
         debug.update(pdbg)
+        debug["blur"] = blur
         debug["thresh_bw"] = thresh
         debug["opened"] = opened
         debug["closed"] = closed
@@ -98,19 +107,23 @@ def detect_spots(image: np.ndarray, debug: dict = None):
     rejected: list = []
 
     for c in contours:
-        area = cv2.contourArea(c)
-        peri = cv2.arcLength(c, True)
-        circ = 0.0 if peri == 0 else 4 * np.pi * area / (peri ** 2)
+        area = float(cv2.contourArea(c))
+        peri = float(cv2.arcLength(c, True))
+        circ = 0.0 if peri <= 1e-6 else 4.0 * np.pi * area / (peri ** 2)
 
         hull = cv2.convexHull(c)
-        hull_area = cv2.contourArea(hull)
-        solidity = 0.0 if hull_area == 0 else area / hull_area
+        hull_area = float(cv2.contourArea(hull))
+        solidity = 0.0 if hull_area <= 1e-6 else area / hull_area
 
         reason = None
         if not (DEFAULT_MIN_SPOT_AREA <= area <= DEFAULT_MAX_SPOT_AREA):
             reason = "area"
+        elif peri <= 1e-6:
+            reason = "perimeter"
         elif circ < DEFAULT_MIN_CIRCULARITY:
             reason = "circularity"
+        elif hull_area <= 1e-6:
+            reason = "hull_area"
         elif solidity < DEFAULT_MIN_SOLIDITY:
             reason = "solidity"
 
@@ -126,6 +139,13 @@ def detect_spots(image: np.ndarray, debug: dict = None):
 
         M = cv2.moments(c)
         if M["m00"] == 0:
+            rejected.append({
+                "contour": c,
+                "reason": "zero_moment",
+                "area": area,
+                "circularity": circ,
+                "solidity": solidity,
+            })
             continue
 
         cx = int(M["m10"] / M["m00"])
