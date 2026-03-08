@@ -2,7 +2,7 @@
 
 import numpy as np
 import cv2
-from config import *
+from .config import *
 
 
 def inspect_spot_defects(gray, spot):

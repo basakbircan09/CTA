@@ -3,10 +3,10 @@
 import cv2
 from pathlib import Path
 
-from detection import detect_spots
-from inspection import inspect_spot_defects
-from visualization import draw_accept_reject_overlay
-from excel_export import export_results_to_excel
+from .detection import detect_spots
+from .inspection import inspect_spot_defects
+from .visualization import draw_accept_reject_overlay
+from .excel_export import export_results_to_excel
 
 
 def run_spot_analysis(image_path, output_dir=None, export_excel=True):
@@ -32,18 +32,19 @@ def run_spot_analysis(image_path, output_dir=None, export_excel=True):
         else:
             accepted.append(s)
 
+    overlay = draw_accept_reject_overlay(img, spots)
+
     result={
         "all_spots":spots,
         "accepted_spots":accepted,
         "rejected_spots":rejected,
-        "rejected_candidates":rejected_candidates
+        "rejected_candidates":rejected_candidates,
+        "overlay_image":overlay,
     }
 
     if output_dir:
 
         Path(output_dir).mkdir(exist_ok=True)
-
-        overlay = draw_accept_reject_overlay(img,spots)
 
         cv2.imwrite(str(Path(output_dir)/"overlay.png"),overlay)
 

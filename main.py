@@ -29,6 +29,7 @@ from device_drivers.PI_Control_System.core.models import Position
 from device_drivers.thorlabs_camera_wrapper import ThorlabsCamera
 from device_drivers.plate_auto_adjuster import auto_adjust_plate
 from device_drivers.GPT_Merge import analyze_plate_and_spots
+from device_drivers.spot_analysis.pipeline import run_spot_analysis
 
 class SimpleStageApp(QMainWindow):
     def __init__(self, use_mock: bool = True):
@@ -509,40 +510,65 @@ class SimpleStageApp(QMainWindow):
             self.log("Camera live stopped", "info")
 
     def on_capture_clicked(self):
-        """4- Take a Picture: capture one frame and show it."""
-        try:
-            if not self.camera.is_connected:
+        """4- Capture: take a picture from camera, or choose a file if camera is not connected."""
+        # Try to connect and use the camera
+        camera_available = self.camera.is_connected
+        if not camera_available:
+            try:
                 self.camera.connect()
+                camera_available = True
+            except Exception:
+                camera_available = False
 
-            save_dir = PROJECT_ROOT / "artifacts" / "captures"
-            save_dir.mkdir(parents=True, exist_ok=True)
+        if camera_available:
+            # Camera is connected — capture a frame
+            try:
+                save_dir = PROJECT_ROOT / "artifacts" / "captures"
+                save_dir.mkdir(parents=True, exist_ok=True)
 
-            # Build filename from current settings
-            exp = self.spin_exposure.value()
-            gain = self.spin_gain.value()
-            r = self.spin_wb_r.value()
-            g = self.spin_wb_g.value()
-            b = self.spin_wb_b.value()
+                exp = self.spin_exposure.value()
+                gain = self.spin_gain.value()
+                r = self.spin_wb_r.value()
+                g = self.spin_wb_g.value()
+                b = self.spin_wb_b.value()
 
-            base_name = f"Photo_{exp:.1f}_{gain:.1f}_{r:.2f}_{g:.2f}_{b:.2f}"
+                base_name = f"Photo_{exp:.1f}_{gain:.1f}_{r:.2f}_{g:.2f}_{b:.2f}"
 
-            # Find unique filename with incrementing suffix
-            filename = save_dir / f"{base_name}.png"
-            counter = 1
-            while filename.exists():
-                filename = save_dir / f"{base_name}_{counter}.png"
-                counter += 1
+                filename = save_dir / f"{base_name}.png"
+                counter = 1
+                while filename.exists():
+                    filename = save_dir / f"{base_name}_{counter}.png"
+                    counter += 1
 
-            frame = self.camera.save_frame(str(filename))
-            self.last_image_path = str(filename)
+                frame = self.camera.save_frame(str(filename))
+                self.last_image_path = str(filename)
 
-            pix = self.cv_to_qpixmap(frame)
+                pix = self.cv_to_qpixmap(frame)
+                self.image_label.setPixmap(pix)
+                self.log(f"Captured image: {filename}", "info")
+            except Exception as e:
+                self.log(f"Capture error: {e}", "error")
+                QMessageBox.critical(self, "Capture error", str(e))
+        else:
+            # No camera — let the user choose an image file
+            self.log("Camera not connected. Please select an image file.", "warn")
+            file_path, _ = QFileDialog.getOpenFileName(
+                self,
+                "Select image (no camera connected)",
+                str(PROJECT_ROOT),
+                "Images (*.png *.jpg *.jpeg *.bmp)",
+            )
+            if not file_path:
+                self.log("Capture cancelled (no file selected).", "warn")
+                return
+            img = cv2.imread(file_path)
+            if img is None:
+                self.log(f"Could not load image: {file_path}", "error")
+                return
+            self.last_image_path = file_path
+            pix = self.cv_to_qpixmap(img)
             self.image_label.setPixmap(pix)
-
-            self.log(f"Captured image: {filename}", "info")
-        except Exception as e:
-            self.log(f"Capture error: {e}", "error")
-            QMessageBox.critical(self, "Capture error", str(e))
+            self.log(f"Loaded image from file: {file_path}", "info")
 
     def on_plate_clicked(self):
         """5- Plate detection on last captured image or user-chosen file."""
@@ -635,12 +661,11 @@ class SimpleStageApp(QMainWindow):
 
 
     def on_we_clicked(self):
-        """7- WE Detection (bubble/spot check) on detected plate image."""
+        """7- WE Detection (spot analysis) on detected plate image using spot_analysis pipeline."""
         # Prefer last detected plate image; otherwise let user choose
         image_path = self.last_plate_path
 
         if not image_path:
-            # No plate detected yet, ask user if they want to select an image
             msg = "No plate detected yet. Please run Plate Detection first, or select an image manually."
             self.log(msg, "warn")
             reply = QMessageBox.question(
@@ -652,7 +677,7 @@ class SimpleStageApp(QMainWindow):
             if reply == QMessageBox.StandardButton.Yes:
                 file_path, _ = QFileDialog.getOpenFileName(
                     self,
-                    "Select image for WE (bubble) detection",
+                    "Select image for WE (spot) detection",
                     str(PROJECT_ROOT),
                     "Images (*.png *.jpg *.jpeg *.bmp)",
                 )
@@ -668,32 +693,25 @@ class SimpleStageApp(QMainWindow):
 
         try:
             save_dir = PROJECT_ROOT / "artifacts" / "we_detection"
-            result = analyze_plate_and_spots(image_path, str(save_dir))
+            result = run_spot_analysis(image_path, str(save_dir), export_excel=True)
 
-            if result["error"]:
-                msg = f"Detection error: {result['error']}"
-                self.log(msg, "warn")
-                QMessageBox.warning(self, "WE Detection", msg)
-                return
-
-            # Show accepted spots image (spots without defects)
-            output_img = result["accepted_spots_image"]
-            if output_img is not None:
-                pix = self.cv_to_qpixmap(output_img)
+            # Display the overlay image (spots colour-coded good/bad)
+            overlay = result.get("overlay_image")
+            if overlay is not None:
+                pix = self.cv_to_qpixmap(overlay)
                 self.image_label.setPixmap(pix)
 
             accepted = len(result["accepted_spots"])
             rejected = len(result["rejected_spots"])
             total = len(result["all_spots"])
 
-            # List rejected spot labels
             rejected_labels = [s.get("label", "?") for s in result["rejected_spots"]]
 
             msg = (
                 f"WE Detection Results:\n"
                 f"  Total spots: {total}\n"
                 f"  Accepted (no defects): {accepted}\n"
-                f"  Rejected (bubbles/holes): {rejected}\n"
+                f"  Rejected (defective): {rejected}\n"
             )
             if rejected_labels:
                 msg += f"  Defective spots: {', '.join(rejected_labels)}"

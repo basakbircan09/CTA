@@ -4,7 +4,7 @@ import cv2
 import numpy as np
 from typing import Dict, Any, List, Tuple
 
-from config import *
+from .config import *
 
 
 def preprocess_for_detection(bgr, debug=None):
