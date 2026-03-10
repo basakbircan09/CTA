@@ -631,7 +631,7 @@ class SimpleStageApp(QMainWindow):
 
         sfc_layout.addWidget(QLabel("Holder→SFC X (mm):"), 0, 0)
         self.spin_sfc_offset_x = QDoubleSpinBox()
-        self.spin_sfc_offset_x.setRange(-300.0, 300.0)
+        self.spin_sfc_offset_x.setRange(-400.0, 400.0)
         self.spin_sfc_offset_x.setValue(0.0)
         self.spin_sfc_offset_x.setSingleStep(0.1)
         self.spin_sfc_offset_x.setDecimals(2)
@@ -639,7 +639,7 @@ class SimpleStageApp(QMainWindow):
 
         sfc_layout.addWidget(QLabel("Holder→SFC Y (mm):"), 1, 0)
         self.spin_sfc_offset_y = QDoubleSpinBox()
-        self.spin_sfc_offset_y.setRange(-300.0, 300.0)
+        self.spin_sfc_offset_y.setRange(-400.0, 400.0)
         self.spin_sfc_offset_y.setValue(0.0)
         self.spin_sfc_offset_y.setSingleStep(0.1)
         self.spin_sfc_offset_y.setDecimals(2)
@@ -647,7 +647,7 @@ class SimpleStageApp(QMainWindow):
 
         sfc_layout.addWidget(QLabel("SFC Z (mm):"), 2, 0)
         self.spin_sfc_z = QDoubleSpinBox()
-        self.spin_sfc_z.setRange(0.0, 300.0)
+        self.spin_sfc_z.setRange(0.0, 400.0)
         self.spin_sfc_z.setValue(0.0)
         self.spin_sfc_z.setSingleStep(0.1)
         self.spin_sfc_z.setDecimals(2)
@@ -655,7 +655,7 @@ class SimpleStageApp(QMainWindow):
 
         sfc_layout.addWidget(QLabel("Ref Stage X (mm):"), 3, 0)
         self.spin_base_x = QDoubleSpinBox()
-        self.spin_base_x.setRange(0.0, 300.0)
+        self.spin_base_x.setRange(0.0, 400.0)
         self.spin_base_x.setValue(200.0)
         self.spin_base_x.setSingleStep(0.1)
         self.spin_base_x.setDecimals(2)
@@ -667,7 +667,7 @@ class SimpleStageApp(QMainWindow):
 
         sfc_layout.addWidget(QLabel("Ref Stage Y (mm):"), 4, 0)
         self.spin_base_y = QDoubleSpinBox()
-        self.spin_base_y.setRange(0.0, 300.0)
+        self.spin_base_y.setRange(0.0, 400.0)
         self.spin_base_y.setValue(200.0)
         self.spin_base_y.setSingleStep(0.1)
         self.spin_base_y.setDecimals(2)
