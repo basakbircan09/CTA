@@ -15,7 +15,7 @@ from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget,
     QHBoxLayout, QVBoxLayout, QPushButton, QLabel, QMessageBox, QTextEdit,
     QFileDialog, QGroupBox, QGridLayout, QDoubleSpinBox, QComboBox,
-    QDialog, QGraphicsView, QGraphicsScene,
+    QDialog, QGraphicsView, QGraphicsScene, QScrollArea,
 )
 from PySide6.QtGui import (
     QPixmap, QImage, QPen, QBrush, QColor, QFont, QPainter,
@@ -446,9 +446,19 @@ class SimpleStageApp(QMainWindow):
         middle_layout.setSpacing(10)
         outer_layout.addLayout(middle_layout, stretch=4)
 
-        settings_panel = QVBoxLayout()
+        # Left panel inside a scroll area so it can be scrolled when content
+        # exceeds the window height
+        settings_widget = QWidget()
+        settings_panel  = QVBoxLayout(settings_widget)
         settings_panel.setSpacing(10)
-        middle_layout.addLayout(settings_panel, stretch=1)
+        settings_panel.setContentsMargins(4, 4, 4, 4)
+
+        left_scroll = QScrollArea()
+        left_scroll.setWidget(settings_widget)
+        left_scroll.setWidgetResizable(True)
+        left_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        left_scroll.setMaximumWidth(310)
+        middle_layout.addWidget(left_scroll)
 
         # Camera settings group
         cam_group  = QGroupBox("Camera Settings")
@@ -643,25 +653,33 @@ class SimpleStageApp(QMainWindow):
         self.spin_sfc_z.setDecimals(2)
         sfc_layout.addWidget(self.spin_sfc_z, 2, 1)
 
-        sfc_layout.addWidget(QLabel("Base X (mm):"), 3, 0)
+        sfc_layout.addWidget(QLabel("Ref Stage X (mm):"), 3, 0)
         self.spin_base_x = QDoubleSpinBox()
         self.spin_base_x.setRange(0.0, 300.0)
         self.spin_base_x.setValue(200.0)
         self.spin_base_x.setSingleStep(0.1)
         self.spin_base_x.setDecimals(2)
+        self.spin_base_x.setToolTip(
+            "Stage X position when the image was captured\n"
+            "(i.e. where the holder reference corner sits on the stage)"
+        )
         sfc_layout.addWidget(self.spin_base_x, 3, 1)
 
-        sfc_layout.addWidget(QLabel("Base Y (mm):"), 4, 0)
+        sfc_layout.addWidget(QLabel("Ref Stage Y (mm):"), 4, 0)
         self.spin_base_y = QDoubleSpinBox()
         self.spin_base_y.setRange(0.0, 300.0)
         self.spin_base_y.setValue(200.0)
         self.spin_base_y.setSingleStep(0.1)
         self.spin_base_y.setDecimals(2)
+        self.spin_base_y.setToolTip(
+            "Stage Y position when the image was captured\n"
+            "(i.e. where the holder reference corner sits on the stage)"
+        )
         sfc_layout.addWidget(self.spin_base_y, 4, 1)
 
-        btn_set_base = QPushButton("Set Base from Stage")
+        btn_set_base = QPushButton("Read from Stage")
         btn_set_base.setToolTip(
-            "Read current stage XY and store as alignment base position"
+            "Read current stage XY and store as the reference stage position"
         )
         btn_set_base.clicked.connect(self.on_set_alignment_base)
         sfc_layout.addWidget(btn_set_base, 5, 0, 1, 2)
