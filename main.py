@@ -1,3 +1,4 @@
+import math
 import os
 import sys
 from pathlib import Path
@@ -1276,7 +1277,6 @@ class SimpleStageApp(QMainWindow):
             return
 
         # Safety limit check
-        import math
         move_dist = math.hypot(target_x - current.x, target_y - current.y)
         max_move  = self.spin_max_move.value()
         if move_dist > max_move:
@@ -1385,7 +1385,6 @@ class SimpleStageApp(QMainWindow):
             return
 
         # Safety limit check
-        import math
         move_dist = math.hypot(target_x - current.x, target_y - current.y)
         max_move  = self.spin_max_move.value()
         if move_dist > max_move:

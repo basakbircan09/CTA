@@ -1,3 +1,0 @@
-app:
-  use_mock_stage: true
-  examples_dir: "./CTA/examples"
