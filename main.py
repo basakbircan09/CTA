@@ -15,7 +15,7 @@ from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget,
     QHBoxLayout, QVBoxLayout, QPushButton, QLabel, QMessageBox, QTextEdit,
     QFileDialog, QGroupBox, QGridLayout, QDoubleSpinBox, QComboBox,
-    QDialog, QGraphicsView, QGraphicsScene, QScrollArea,
+    QDialog, QGraphicsView, QGraphicsScene, QScrollArea, QCheckBox,
 )
 from PySide6.QtGui import (
     QPixmap, QImage, QPen, QBrush, QColor, QFont, QPainter,
@@ -379,6 +379,7 @@ class SimpleStageApp(QMainWindow):
         self._align_base_y: float | None    = None   # stage Y when image was captured
         self._at_spot: bool                 = False  # True once the stage has reached a spot
         self._align_worker: SpotAlignmentWorker | None = None
+        self._current_spot_idx: int         = 0      # tracks next spot for Move Next Spot
 
         # --- Positions ---
         self.park_position = Position(x=200.0, y=200.0, z=200.0)
@@ -602,24 +603,37 @@ class SimpleStageApp(QMainWindow):
         settings_panel.addWidget(stage_group)
 
         # Move to Spot group
-        move_spot_group  = QGroupBox("Move to Spot")
+        move_spot_group  = QGroupBox("Spot Navigation")
         move_spot_group.setStyleSheet("QGroupBox { font-weight: bold; }")
         move_spot_layout = QGridLayout(move_spot_group)
         move_spot_layout.setSpacing(6)
 
+        move_spot_layout.addWidget(QLabel("Spot:"), 0, 0)
         self.combo_move_spot = QComboBox()
-        self.combo_move_spot.addItems([f"Move to S{i}" for i in range(1, 11)])
-        move_spot_layout.addWidget(self.combo_move_spot, 0, 0)
+        self.combo_move_spot.setToolTip(
+            "Populated automatically after Manual Spot Detect.\n"
+            "Select a spot then press Go."
+        )
+        move_spot_layout.addWidget(self.combo_move_spot, 0, 1)
 
         self.btn_move_spot = QPushButton("Go")
         self.btn_move_spot.setStyleSheet("font-weight: bold;")
+        self.btn_move_spot.setToolTip("Compute alignment for the selected spot and move to it.")
         self.btn_move_spot.clicked.connect(self.on_move_to_spot_clicked)
-        move_spot_layout.addWidget(self.btn_move_spot, 0, 1)
+        move_spot_layout.addWidget(self.btn_move_spot, 0, 2)
 
-        self.btn_move_in_order = QPushButton("Move in Order")
-        self.btn_move_in_order.setStyleSheet("font-weight: bold;")
-        self.btn_move_in_order.clicked.connect(self.on_move_in_order_clicked)
-        move_spot_layout.addWidget(self.btn_move_in_order, 1, 0, 1, 2)
+        self.btn_move_next = QPushButton("Move Next Spot")
+        self.btn_move_next.setStyleSheet("font-weight: bold;")
+        self.btn_move_next.setToolTip(
+            "Move to the next spot in sequence (S1 → S2 → S3 …).\n"
+            "Each click advances one spot so you can supervise every step."
+        )
+        self.btn_move_next.clicked.connect(self.on_move_next_spot_clicked)
+        move_spot_layout.addWidget(self.btn_move_next, 1, 0, 1, 3)
+
+        self.lbl_next_spot = QLabel("Next: —")
+        self.lbl_next_spot.setStyleSheet("color: #888; font-size: 11px;")
+        move_spot_layout.addWidget(self.lbl_next_spot, 2, 0, 1, 3)
 
         settings_panel.addWidget(move_spot_group)
 
@@ -685,6 +699,46 @@ class SimpleStageApp(QMainWindow):
         sfc_layout.addWidget(btn_set_base, 5, 0, 1, 2)
 
         settings_panel.addWidget(sfc_group)
+
+        # Alignment Options group
+        align_opt_group  = QGroupBox("Alignment Options")
+        align_opt_group.setStyleSheet("QGroupBox { font-weight: bold; }")
+        align_opt_layout = QGridLayout(align_opt_group)
+        align_opt_layout.setSpacing(6)
+
+        self.chk_dry_run = QCheckBox("Dry Run (no stage movement)")
+        self.chk_dry_run.setToolTip(
+            "When checked: compute offsets, log them, but do NOT move the stage."
+        )
+        align_opt_layout.addWidget(self.chk_dry_run, 0, 0, 1, 2)
+
+        self.chk_flip_x = QCheckBox("Flip X")
+        self.chk_flip_x.setToolTip(
+            "Invert the X axis direction when converting pixel offset to stage move.\n"
+            "Use this if the stage moves in the wrong X direction."
+        )
+        align_opt_layout.addWidget(self.chk_flip_x, 1, 0)
+
+        self.chk_flip_y = QCheckBox("Flip Y")
+        self.chk_flip_y.setToolTip(
+            "Invert the Y axis direction when converting pixel offset to stage move.\n"
+            "Use this if the stage moves in the wrong Y direction."
+        )
+        align_opt_layout.addWidget(self.chk_flip_y, 1, 1)
+
+        align_opt_layout.addWidget(QLabel("Safety limit (mm):"), 2, 0)
+        self.spin_max_move = QDoubleSpinBox()
+        self.spin_max_move.setRange(0.1, 400.0)
+        self.spin_max_move.setValue(10.0)
+        self.spin_max_move.setSingleStep(1.0)
+        self.spin_max_move.setDecimals(1)
+        self.spin_max_move.setToolTip(
+            "If the computed XY move exceeds this distance (mm),\n"
+            "a warning is shown and confirmation is required before moving."
+        )
+        align_opt_layout.addWidget(self.spin_max_move, 2, 1)
+
+        settings_panel.addWidget(align_opt_group)
         settings_panel.addStretch()
 
         # Image display
@@ -1030,9 +1084,12 @@ class SimpleStageApp(QMainWindow):
 
             if ref or spots:
                 # Persist for alignment use
-                self._manual_reference = ref
-                self._manual_spots     = spots
-                self._at_spot          = False   # reset motion state
+                self._manual_reference  = ref
+                self._manual_spots      = spots
+                self._at_spot           = False   # reset motion state
+                self._current_spot_idx  = 0       # start from S1 on next Move Next
+                self._refresh_spot_combo()
+                self._update_next_spot_label()
 
                 if ref:
                     self.log(f"  Reference: X={ref['x']}  Y={ref['y']}", "info")
@@ -1071,11 +1128,35 @@ class SimpleStageApp(QMainWindow):
     # Alignment helpers
     # ------------------------------------------------------------------
 
+    def _refresh_spot_combo(self) -> None:
+        """Repopulate the spot combo from the currently loaded manual spots."""
+        self.combo_move_spot.clear()
+        for spot in self._manual_spots:
+            self.combo_move_spot.addItem(spot["label"])
+
+    def _update_next_spot_label(self) -> None:
+        """Update the 'Next: Sx' status label below Move Next Spot."""
+        if not self._manual_spots:
+            self.lbl_next_spot.setText("Next: —")
+            return
+        if self._current_spot_idx >= len(self._manual_spots):
+            self.lbl_next_spot.setText("Next: — (all visited)")
+        else:
+            nxt = self._manual_spots[self._current_spot_idx]["label"]
+            remaining = len(self._manual_spots) - self._current_spot_idx
+            self.lbl_next_spot.setText(
+                f"Next: {nxt}  ({self._current_spot_idx + 1}/{len(self._manual_spots)})"
+            )
+
     def _build_aligner(self) -> SpotAligner:
+        # invert_x/invert_y default to True (camera vs stage axis convention).
+        # The Flip checkboxes let the user toggle each axis without touching code.
         return SpotAligner(
             holder_to_sfc_x=self.spin_sfc_offset_x.value(),
             holder_to_sfc_y=self.spin_sfc_offset_y.value(),
             sfc_z=self.spin_sfc_z.value(),
+            invert_x=not self.chk_flip_x.isChecked(),
+            invert_y=not self.chk_flip_y.isChecked(),
         )
 
     def _check_alignment_ready(self) -> bool:
@@ -1095,20 +1176,48 @@ class SimpleStageApp(QMainWindow):
         return True
 
     def _log_alignment(self, result: AlignmentResult) -> None:
-        px, py   = result.pixel_offset
+        ppx, ppy = result.pixel_pos
+        opx, opy = result.pixel_offset
         rx, ry   = result.real_offset_mm
         mx, my   = result.stage_move_mm
-        self.log(f"  {result.label}  pixel offset = ({px} , {py})", "info")
-        self.log(f"  {result.label}  real offset  = ({rx:.2f} mm , {ry:.2f} mm)", "info")
-        self.log(f"  {result.label}  stage move   = ({mx:.2f} mm , {my:.2f} mm)", "info")
+        self.log(
+            f"  {result.label}  Pixel pos:    ({ppx}, {ppy})", "info"
+        )
+        self.log(
+            f"  {result.label}  Pixel offset: dx={opx:+d}  dy={opy:+d}", "info"
+        )
+        self.log(
+            f"  {result.label}  Real offset:  dx={rx:+.2f} mm  dy={ry:+.2f} mm", "info"
+        )
+        self.log(
+            f"  {result.label}  Stage move:   X={mx:+.3f} mm  Y={my:+.3f} mm", "info"
+        )
+
+    def _set_move_buttons_enabled(self, enabled: bool) -> None:
+        self.btn_move_spot.setEnabled(enabled)
+        self.btn_move_next.setEnabled(enabled)
 
     def _run_steps(self, steps: list, label: str) -> None:
-        """Kick off a SpotAlignmentWorker for the given step list."""
+        """Kick off a SpotAlignmentWorker for the given step list.
+
+        If Dry Run is checked, log all planned steps without moving the stage.
+        """
         if self._align_worker and self._align_worker.isRunning():
             QMessageBox.warning(self, "Busy", "A move is already in progress.")
             return
-        self.btn_move_spot.setEnabled(False)
-        self.btn_move_in_order.setEnabled(False)
+
+        if self.chk_dry_run.isChecked():
+            self.log(f"[DRY RUN] Steps planned for {label}:", "info")
+            for step in steps:
+                self.log(f"  [DRY RUN]  {step.description}", "info")
+                self.log(
+                    f"  [DRY RUN]  → target X={step.target_x:.3f}  "
+                    f"Y={step.target_y:.3f}  Z={step.target_z:.3f} mm", "info"
+                )
+            self.log(f"[DRY RUN] No stage movement performed for {label}.", "warn")
+            return
+
+        self._set_move_buttons_enabled(False)
         self._align_worker = SpotAlignmentWorker(self.motion_service, steps)
         self._align_worker.step_done.connect(
             lambda desc: self.log(f"  ✓ {desc}", "info")
@@ -1120,14 +1229,12 @@ class SimpleStageApp(QMainWindow):
         self._align_worker.start()
 
     def _on_align_finished(self, label: str) -> None:
-        self.btn_move_spot.setEnabled(True)
-        self.btn_move_in_order.setEnabled(True)
+        self._set_move_buttons_enabled(True)
         self._at_spot = True
         self.log(f"Arrived at {label}.", "info")
 
     def _on_align_error(self, msg: str) -> None:
-        self.btn_move_spot.setEnabled(True)
-        self.btn_move_in_order.setEnabled(True)
+        self._set_move_buttons_enabled(True)
         self.log(f"Alignment move error: {msg}", "error")
         QMessageBox.critical(self, "Alignment Error", msg)
 
@@ -1139,8 +1246,11 @@ class SimpleStageApp(QMainWindow):
         if not self._check_alignment_ready():
             return
 
-        # Derive spot label from combo ("Move to S3" → "S3")
-        spot_label = self.combo_move_spot.currentText().replace("Move to ", "")
+        spot_label = self.combo_move_spot.currentText()
+        if not spot_label:
+            QMessageBox.warning(self, "No Spot Selected",
+                "No spots loaded yet. Run Manual Spot Detect first.")
+            return
 
         base_x = self.spin_base_x.value()
         base_y = self.spin_base_y.value()
@@ -1155,7 +1265,7 @@ class SimpleStageApp(QMainWindow):
 
         target_x, target_y = aligner.stage_target(result, base_x, base_y)
 
-        self.log(f"--- Moving to {spot_label} ---", "info")
+        self.log(f"--- Computing alignment for {spot_label} ---", "info")
         self._log_alignment(result)
         self.log(f"  Stage target: X={target_x:.3f}  Y={target_y:.3f} mm", "info")
 
@@ -1164,6 +1274,42 @@ class SimpleStageApp(QMainWindow):
         except Exception as exc:
             self.log(f"Cannot read stage position: {exc}", "error")
             return
+
+        # Safety limit check
+        import math
+        move_dist = math.hypot(target_x - current.x, target_y - current.y)
+        max_move  = self.spin_max_move.value()
+        if move_dist > max_move:
+            reply = QMessageBox.warning(
+                self, "Safety Limit Exceeded",
+                f"Computed XY move distance: {move_dist:.2f} mm\n"
+                f"Safety limit: {max_move:.1f} mm\n\n"
+                "This may indicate a bad calibration.\n"
+                "Proceed anyway?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            )
+            if reply != QMessageBox.StandardButton.Yes:
+                self.log(f"Move to {spot_label} cancelled (safety limit).", "warn")
+                return
+
+        # Confirm dialog — show computed offsets before moving
+        mx, my = result.stage_move_mm
+        reply = QMessageBox.question(
+            self, f"Confirm Move → {spot_label}",
+            f"Spot:          {spot_label}\n"
+            f"Stage ΔX:      {mx:+.3f} mm\n"
+            f"Stage ΔY:      {my:+.3f} mm\n"
+            f"Target X:      {target_x:.3f} mm\n"
+            f"Target Y:      {target_y:.3f} mm\n"
+            f"Move distance: {move_dist:.2f} mm\n\n"
+            "Move the stage?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            self.log(f"Move to {spot_label} cancelled by user.", "warn")
+            return
+
+        self.log(f"--- Moving to {spot_label} ---", "info")
 
         if self._at_spot:
             steps = aligner.between_spot_sequence(
@@ -1181,27 +1327,56 @@ class SimpleStageApp(QMainWindow):
         self._run_steps(steps, spot_label)
 
     # ------------------------------------------------------------------
-    # Move through all spots in order
+    # Move Next Spot — supervised one-step-at-a-time traversal
     # ------------------------------------------------------------------
 
-    def on_move_in_order_clicked(self) -> None:
+    def on_move_next_spot_clicked(self) -> None:
+        """Move to the next spot in sequence, one at a time.
+
+        Each press advances _current_spot_idx by one so the user must
+        review each step before the stage continues.
+        """
         if not self._check_alignment_ready():
             return
 
-        base_x = self.spin_base_x.value()
-        base_y = self.spin_base_y.value()
+        if not self._manual_spots:
+            QMessageBox.warning(self, "No Spots", "No spots loaded yet.")
+            return
+
+        if self._current_spot_idx >= len(self._manual_spots):
+            reply = QMessageBox.question(
+                self, "All Spots Visited",
+                f"All {len(self._manual_spots)} spot(s) have been visited.\n\n"
+                "Reset to start from S1 again?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            )
+            if reply == QMessageBox.StandardButton.Yes:
+                self._current_spot_idx = 0
+                self._at_spot = False
+                self._update_next_spot_label()
+            return
+
+        spot       = self._manual_spots[self._current_spot_idx]
+        spot_label = spot["label"]
+        base_x     = self.spin_base_x.value()
+        base_y     = self.spin_base_y.value()
 
         aligner = self._build_aligner()
         try:
             aligner.load_spots(self._manual_reference, self._manual_spots)
-            results = aligner.compute_all_alignments()
+            result = aligner.compute_alignment(spot_label)
         except ValueError as exc:
             QMessageBox.warning(self, "Alignment Error", str(exc))
             return
 
-        if not results:
-            QMessageBox.information(self, "No Spots", "No spots to move through.")
-            return
+        target_x, target_y = aligner.stage_target(result, base_x, base_y)
+
+        self.log(
+            f"--- Next Spot ({self._current_spot_idx + 1}/{len(self._manual_spots)}): "
+            f"{spot_label} ---", "info"
+        )
+        self._log_alignment(result)
+        self.log(f"  Stage target: X={target_x:.3f}  Y={target_y:.3f} mm", "info")
 
         try:
             current = self.motion_service.get_current_position()
@@ -1209,31 +1384,61 @@ class SimpleStageApp(QMainWindow):
             self.log(f"Cannot read stage position: {exc}", "error")
             return
 
-        self.log(f"--- Move in Order: {len(results)} spot(s) ---", "info")
-        self._at_spot = False  # always treat first move as fresh
+        # Safety limit check
+        import math
+        move_dist = math.hypot(target_x - current.x, target_y - current.y)
+        max_move  = self.spin_max_move.value()
+        if move_dist > max_move:
+            reply = QMessageBox.warning(
+                self, "Safety Limit Exceeded",
+                f"Computed XY move distance: {move_dist:.2f} mm\n"
+                f"Safety limit: {max_move:.1f} mm\n\n"
+                "This may indicate a bad calibration.\n"
+                "Proceed anyway?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            )
+            if reply != QMessageBox.StandardButton.Yes:
+                self.log(f"Move Next ({spot_label}) cancelled (safety limit).", "warn")
+                return
 
-        all_steps = []
-        cx, cy, cz = current.x, current.y, current.z
+        # Confirm dialog
+        mx, my = result.stage_move_mm
+        remaining = len(self._manual_spots) - self._current_spot_idx - 1
+        reply = QMessageBox.question(
+            self, f"Confirm Move → {spot_label}",
+            f"Spot:            {spot_label}  "
+            f"({self._current_spot_idx + 1} of {len(self._manual_spots)})\n"
+            f"Stage ΔX:        {mx:+.3f} mm\n"
+            f"Stage ΔY:        {my:+.3f} mm\n"
+            f"Target X:        {target_x:.3f} mm\n"
+            f"Target Y:        {target_y:.3f} mm\n"
+            f"Move distance:   {move_dist:.2f} mm\n"
+            f"Remaining after: {remaining} spot(s)\n\n"
+            "Move the stage?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            self.log(f"Move Next ({spot_label}) cancelled by user.", "warn")
+            return
 
-        for i, result in enumerate(results):
-            tx, ty = aligner.stage_target(result, base_x, base_y)
-            self._log_alignment(result)
-            self.log(f"  Stage target: X={tx:.3f}  Y={ty:.3f} mm", "info")
+        self.log(f"--- Moving to {spot_label} ---", "info")
 
-            if i == 0:
-                steps = aligner.first_spot_sequence(tx, ty, cx, cy, cz,
-                                                    label=result.label)
-            else:
-                steps = aligner.between_spot_sequence(tx, ty, cx, cy, cz,
-                                                      label=result.label)
-            all_steps.extend(steps)
+        if self._at_spot:
+            steps = aligner.between_spot_sequence(
+                target_x, target_y,
+                current.x, current.y, current.z,
+                label=spot_label,
+            )
+        else:
+            steps = aligner.first_spot_sequence(
+                target_x, target_y,
+                current.x, current.y, current.z,
+                label=spot_label,
+            )
 
-            # Update simulated position for next iteration's "current"
-            cz_raised = cz + aligner.Z_RAISE_MM if i > 0 else cz
-            cx, cy    = tx, ty
-            cz        = aligner.sfc_z + aligner.Z_APPROACH_OFFSET
-
-        self._run_steps(all_steps, f"S1–S{len(results)}")
+        self._current_spot_idx += 1
+        self._update_next_spot_label()
+        self._run_steps(steps, spot_label)
 
     # ================================================================
     # Camera settings handlers
