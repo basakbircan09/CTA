@@ -548,63 +548,22 @@ class SimpleStageApp(QMainWindow):
 
         settings_panel.addWidget(stage_group)
 
-        # Ref. Point group
-        ref_group  = QGroupBox("Ref. Point")
-        ref_group.setStyleSheet("QGroupBox { font-weight: bold; }")
-        ref_layout = QGridLayout(ref_group)
-        ref_layout.setSpacing(8)
+        # Move to Spot group
+        move_spot_group  = QGroupBox("Move to Spot")
+        move_spot_group.setStyleSheet("QGroupBox { font-weight: bold; }")
+        move_spot_layout = QHBoxLayout(move_spot_group)
+        move_spot_layout.setSpacing(8)
 
-        _spin_style_default = ""
-        _spin_style_saved   = "QDoubleSpinBox { background-color: #1a4a1a; color: #6bcb77; }"
+        self.combo_move_spot = QComboBox()
+        self.combo_move_spot.addItems([f"Move to S{i}" for i in range(1, 11)])
+        move_spot_layout.addWidget(self.combo_move_spot, stretch=1)
 
-        self.spin_ref_x = QDoubleSpinBox()
-        self.spin_ref_y = QDoubleSpinBox()
-        self.spin_ref_z = QDoubleSpinBox()
-        for row, (lbl, spin) in enumerate(
-            [("X (mm):", self.spin_ref_x),
-             ("Y (mm):", self.spin_ref_y),
-             ("Z (mm):", self.spin_ref_z)]
-        ):
-            spin.setRange(0.0, 300.0)
-            spin.setValue(0.0)
-            spin.setSingleStep(0.1)
-            spin.setDecimals(1)
-            spin.setMinimumWidth(80)
-            ref_layout.addWidget(QLabel(lbl), row, 0)
-            ref_layout.addWidget(spin, row, 1)
+        btn_move_spot = QPushButton("Go")
+        btn_move_spot.setStyleSheet("font-weight: bold; min-width: 50px;")
+        btn_move_spot.clicked.connect(self.on_move_to_spot_clicked)
+        move_spot_layout.addWidget(btn_move_spot)
 
-        self._ref_point_saved: dict | None = None
-        self._ref_spin_style_saved = _spin_style_saved
-
-        btn_save_ref = QPushButton("Save")
-        btn_save_ref.setStyleSheet("font-weight: bold;")
-        ref_layout.addWidget(btn_save_ref, 3, 0, 1, 2)
-
-        def _on_save_ref_point() -> None:
-            self._ref_point_saved = {
-                "x": self.spin_ref_x.value(),
-                "y": self.spin_ref_y.value(),
-                "z": self.spin_ref_z.value(),
-            }
-            for spin in (self.spin_ref_x, self.spin_ref_y, self.spin_ref_z):
-                spin.setStyleSheet(_spin_style_saved)
-            self.log(
-                f"Ref. point saved: X={self._ref_point_saved['x']:.1f}  "
-                f"Y={self._ref_point_saved['y']:.1f}  "
-                f"Z={self._ref_point_saved['z']:.1f} mm",
-                "info",
-            )
-            # Reset green highlight when user edits a value afterwards
-            def _reset_style() -> None:
-                for s in (self.spin_ref_x, self.spin_ref_y, self.spin_ref_z):
-                    s.setStyleSheet("")
-                    s.valueChanged.disconnect(_reset_style)
-            for s in (self.spin_ref_x, self.spin_ref_y, self.spin_ref_z):
-                s.valueChanged.connect(_reset_style)
-
-        btn_save_ref.clicked.connect(_on_save_ref_point)
-        settings_panel.addWidget(ref_group)
-
+        settings_panel.addWidget(move_spot_group)
         settings_panel.addStretch()
 
         # Image display
@@ -965,6 +924,10 @@ class SimpleStageApp(QMainWindow):
                         self._show_image(annotated)
             else:
                 self.log("Manual spot detect: no spots marked.", "warn")
+
+    def on_move_to_spot_clicked(self) -> None:
+        label = self.combo_move_spot.currentText()  # e.g. "Move to S3"
+        self.log(f"{label}: not yet implemented.", "warn")
 
     # ================================================================
     # Camera settings handlers
