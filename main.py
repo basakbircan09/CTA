@@ -29,6 +29,7 @@ from device_drivers.thorlabs_camera_wrapper import ThorlabsCamera
 from device_drivers.GPT_Merge import analyze_plate_and_spots
 from device_drivers.spot_analysis.pipeline import run_spot_analysis
 from device_drivers.image_utils import load_image, save_image, bgr_to_rgb
+from device_drivers.spot_alignment import SpotAligner, AlignmentResult
 
 
 # ---------------------------------------------------------------------------
@@ -53,6 +54,40 @@ class SpotAnalysisWorker(QThread):
                 export_excel=True,
             )
             self.finished.emit(result)
+        except Exception as exc:
+            self.error.emit(str(exc))
+
+
+# ---------------------------------------------------------------------------
+# Spot alignment motion worker – executes a pre-computed MotionStep list
+# ---------------------------------------------------------------------------
+
+class SpotAlignmentWorker(QThread):
+    """Execute a list of MotionStep objects on the stage in a background thread.
+
+    Each step moves to an absolute (x, y, z) position.  The step order
+    already encodes all Z-safety rules (raise before XY, lower after).
+    """
+    step_done = Signal(str)     # description of the completed step
+    finished  = Signal()
+    error     = Signal(str)
+
+    def __init__(self, motion_service, steps: list) -> None:
+        super().__init__()
+        self.motion_service = motion_service
+        self.steps          = steps          # list[MotionStep]
+
+    def run(self) -> None:
+        try:
+            for step in self.steps:
+                target = Position(
+                    x=step.target_x,
+                    y=step.target_y,
+                    z=step.target_z,
+                )
+                self.motion_service.move_to_position_safe_z(target).result(timeout=120)
+                self.step_done.emit(step.description)
+            self.finished.emit()
         except Exception as exc:
             self.error.emit(str(exc))
 
@@ -337,6 +372,14 @@ class SimpleStageApp(QMainWindow):
         self.last_plate_path: str | None = None
         self._we_worker: SpotAnalysisWorker | None = None
 
+        # --- Alignment state ---
+        self._manual_reference: dict | None = None   # REF pixel from ManualSpotDialog
+        self._manual_spots: list[dict]      = []     # S1..Sn pixels from ManualSpotDialog
+        self._align_base_x: float | None    = None   # stage X when image was captured
+        self._align_base_y: float | None    = None   # stage Y when image was captured
+        self._at_spot: bool                 = False  # True once the stage has reached a spot
+        self._align_worker: SpotAlignmentWorker | None = None
+
         # --- Positions ---
         self.park_position = Position(x=200.0, y=200.0, z=200.0)
 
@@ -551,19 +594,79 @@ class SimpleStageApp(QMainWindow):
         # Move to Spot group
         move_spot_group  = QGroupBox("Move to Spot")
         move_spot_group.setStyleSheet("QGroupBox { font-weight: bold; }")
-        move_spot_layout = QHBoxLayout(move_spot_group)
-        move_spot_layout.setSpacing(8)
+        move_spot_layout = QGridLayout(move_spot_group)
+        move_spot_layout.setSpacing(6)
 
         self.combo_move_spot = QComboBox()
         self.combo_move_spot.addItems([f"Move to S{i}" for i in range(1, 11)])
-        move_spot_layout.addWidget(self.combo_move_spot, stretch=1)
+        move_spot_layout.addWidget(self.combo_move_spot, 0, 0)
 
-        btn_move_spot = QPushButton("Go")
-        btn_move_spot.setStyleSheet("font-weight: bold; min-width: 50px;")
-        btn_move_spot.clicked.connect(self.on_move_to_spot_clicked)
-        move_spot_layout.addWidget(btn_move_spot)
+        self.btn_move_spot = QPushButton("Go")
+        self.btn_move_spot.setStyleSheet("font-weight: bold;")
+        self.btn_move_spot.clicked.connect(self.on_move_to_spot_clicked)
+        move_spot_layout.addWidget(self.btn_move_spot, 0, 1)
+
+        self.btn_move_in_order = QPushButton("Move in Order")
+        self.btn_move_in_order.setStyleSheet("font-weight: bold;")
+        self.btn_move_in_order.clicked.connect(self.on_move_in_order_clicked)
+        move_spot_layout.addWidget(self.btn_move_in_order, 1, 0, 1, 2)
 
         settings_panel.addWidget(move_spot_group)
+
+        # SFC Calibration group
+        sfc_group  = QGroupBox("SFC Calibration")
+        sfc_group.setStyleSheet("QGroupBox { font-weight: bold; }")
+        sfc_layout = QGridLayout(sfc_group)
+        sfc_layout.setSpacing(6)
+
+        sfc_layout.addWidget(QLabel("Holder→SFC X (mm):"), 0, 0)
+        self.spin_sfc_offset_x = QDoubleSpinBox()
+        self.spin_sfc_offset_x.setRange(-300.0, 300.0)
+        self.spin_sfc_offset_x.setValue(0.0)
+        self.spin_sfc_offset_x.setSingleStep(0.1)
+        self.spin_sfc_offset_x.setDecimals(2)
+        sfc_layout.addWidget(self.spin_sfc_offset_x, 0, 1)
+
+        sfc_layout.addWidget(QLabel("Holder→SFC Y (mm):"), 1, 0)
+        self.spin_sfc_offset_y = QDoubleSpinBox()
+        self.spin_sfc_offset_y.setRange(-300.0, 300.0)
+        self.spin_sfc_offset_y.setValue(0.0)
+        self.spin_sfc_offset_y.setSingleStep(0.1)
+        self.spin_sfc_offset_y.setDecimals(2)
+        sfc_layout.addWidget(self.spin_sfc_offset_y, 1, 1)
+
+        sfc_layout.addWidget(QLabel("SFC Z (mm):"), 2, 0)
+        self.spin_sfc_z = QDoubleSpinBox()
+        self.spin_sfc_z.setRange(0.0, 300.0)
+        self.spin_sfc_z.setValue(0.0)
+        self.spin_sfc_z.setSingleStep(0.1)
+        self.spin_sfc_z.setDecimals(2)
+        sfc_layout.addWidget(self.spin_sfc_z, 2, 1)
+
+        sfc_layout.addWidget(QLabel("Base X (mm):"), 3, 0)
+        self.spin_base_x = QDoubleSpinBox()
+        self.spin_base_x.setRange(0.0, 300.0)
+        self.spin_base_x.setValue(200.0)
+        self.spin_base_x.setSingleStep(0.1)
+        self.spin_base_x.setDecimals(2)
+        sfc_layout.addWidget(self.spin_base_x, 3, 1)
+
+        sfc_layout.addWidget(QLabel("Base Y (mm):"), 4, 0)
+        self.spin_base_y = QDoubleSpinBox()
+        self.spin_base_y.setRange(0.0, 300.0)
+        self.spin_base_y.setValue(200.0)
+        self.spin_base_y.setSingleStep(0.1)
+        self.spin_base_y.setDecimals(2)
+        sfc_layout.addWidget(self.spin_base_y, 4, 1)
+
+        btn_set_base = QPushButton("Set Base from Stage")
+        btn_set_base.setToolTip(
+            "Read current stage XY and store as alignment base position"
+        )
+        btn_set_base.clicked.connect(self.on_set_alignment_base)
+        sfc_layout.addWidget(btn_set_base, 5, 0, 1, 2)
+
+        settings_panel.addWidget(sfc_group)
         settings_panel.addStretch()
 
         # Image display
@@ -908,6 +1011,11 @@ class SimpleStageApp(QMainWindow):
             spots = dlg.get_spots()
 
             if ref or spots:
+                # Persist for alignment use
+                self._manual_reference = ref
+                self._manual_spots     = spots
+                self._at_spot          = False   # reset motion state
+
                 if ref:
                     self.log(f"  Reference: X={ref['x']}  Y={ref['y']}", "info")
                 self.log(f"Manual spots saved: {len(spots)} spot(s)", "info")
@@ -925,9 +1033,189 @@ class SimpleStageApp(QMainWindow):
             else:
                 self.log("Manual spot detect: no spots marked.", "warn")
 
+    def on_set_alignment_base(self) -> None:
+        """Read current stage XY and store as the alignment base position."""
+        if not self._is_stage_ready():
+            QMessageBox.warning(self, "Stage Not Ready",
+                "Connect and initialize the stage first.")
+            return
+        try:
+            pos = self.motion_service.get_current_position()
+            self.spin_base_x.setValue(pos.x)
+            self.spin_base_y.setValue(pos.y)
+            self._align_base_x = pos.x
+            self._align_base_y = pos.y
+            self.log(f"Alignment base set: X={pos.x:.2f}  Y={pos.y:.2f} mm", "info")
+        except Exception as exc:
+            self.log(f"Set base error: {exc}", "error")
+
+    # ------------------------------------------------------------------
+    # Alignment helpers
+    # ------------------------------------------------------------------
+
+    def _build_aligner(self) -> SpotAligner:
+        return SpotAligner(
+            holder_to_sfc_x=self.spin_sfc_offset_x.value(),
+            holder_to_sfc_y=self.spin_sfc_offset_y.value(),
+            sfc_z=self.spin_sfc_z.value(),
+        )
+
+    def _check_alignment_ready(self) -> bool:
+        """Return True if spots, reference and base are all set; log + warn otherwise."""
+        if not self._manual_reference:
+            QMessageBox.warning(self, "No Reference",
+                "Use 'Manual Spot Detect' and mark a Reference point first.")
+            return False
+        if not self._manual_spots:
+            QMessageBox.warning(self, "No Spots",
+                "Use 'Manual Spot Detect' and mark at least one spot first.")
+            return False
+        if not self._is_stage_ready():
+            QMessageBox.warning(self, "Stage Not Ready",
+                "Connect and initialize the stage first.")
+            return False
+        return True
+
+    def _log_alignment(self, result: AlignmentResult) -> None:
+        px, py   = result.pixel_offset
+        rx, ry   = result.real_offset_mm
+        mx, my   = result.stage_move_mm
+        self.log(f"  {result.label}  pixel offset = ({px} , {py})", "info")
+        self.log(f"  {result.label}  real offset  = ({rx:.2f} mm , {ry:.2f} mm)", "info")
+        self.log(f"  {result.label}  stage move   = ({mx:.2f} mm , {my:.2f} mm)", "info")
+
+    def _run_steps(self, steps: list, label: str) -> None:
+        """Kick off a SpotAlignmentWorker for the given step list."""
+        if self._align_worker and self._align_worker.isRunning():
+            QMessageBox.warning(self, "Busy", "A move is already in progress.")
+            return
+        self.btn_move_spot.setEnabled(False)
+        self.btn_move_in_order.setEnabled(False)
+        self._align_worker = SpotAlignmentWorker(self.motion_service, steps)
+        self._align_worker.step_done.connect(
+            lambda desc: self.log(f"  ✓ {desc}", "info")
+        )
+        self._align_worker.finished.connect(
+            lambda: self._on_align_finished(label)
+        )
+        self._align_worker.error.connect(self._on_align_error)
+        self._align_worker.start()
+
+    def _on_align_finished(self, label: str) -> None:
+        self.btn_move_spot.setEnabled(True)
+        self.btn_move_in_order.setEnabled(True)
+        self._at_spot = True
+        self.log(f"Arrived at {label}.", "info")
+
+    def _on_align_error(self, msg: str) -> None:
+        self.btn_move_spot.setEnabled(True)
+        self.btn_move_in_order.setEnabled(True)
+        self.log(f"Alignment move error: {msg}", "error")
+        QMessageBox.critical(self, "Alignment Error", msg)
+
+    # ------------------------------------------------------------------
+    # Move to single spot
+    # ------------------------------------------------------------------
+
     def on_move_to_spot_clicked(self) -> None:
-        label = self.combo_move_spot.currentText()  # e.g. "Move to S3"
-        self.log(f"{label}: not yet implemented.", "warn")
+        if not self._check_alignment_ready():
+            return
+
+        # Derive spot label from combo ("Move to S3" → "S3")
+        spot_label = self.combo_move_spot.currentText().replace("Move to ", "")
+
+        base_x = self.spin_base_x.value()
+        base_y = self.spin_base_y.value()
+
+        aligner = self._build_aligner()
+        try:
+            aligner.load_spots(self._manual_reference, self._manual_spots)
+            result = aligner.compute_alignment(spot_label)
+        except ValueError as exc:
+            QMessageBox.warning(self, "Alignment Error", str(exc))
+            return
+
+        target_x, target_y = aligner.stage_target(result, base_x, base_y)
+
+        self.log(f"--- Moving to {spot_label} ---", "info")
+        self._log_alignment(result)
+        self.log(f"  Stage target: X={target_x:.3f}  Y={target_y:.3f} mm", "info")
+
+        try:
+            current = self.motion_service.get_current_position()
+        except Exception as exc:
+            self.log(f"Cannot read stage position: {exc}", "error")
+            return
+
+        if self._at_spot:
+            steps = aligner.between_spot_sequence(
+                target_x, target_y,
+                current.x, current.y, current.z,
+                label=spot_label,
+            )
+        else:
+            steps = aligner.first_spot_sequence(
+                target_x, target_y,
+                current.x, current.y, current.z,
+                label=spot_label,
+            )
+
+        self._run_steps(steps, spot_label)
+
+    # ------------------------------------------------------------------
+    # Move through all spots in order
+    # ------------------------------------------------------------------
+
+    def on_move_in_order_clicked(self) -> None:
+        if not self._check_alignment_ready():
+            return
+
+        base_x = self.spin_base_x.value()
+        base_y = self.spin_base_y.value()
+
+        aligner = self._build_aligner()
+        try:
+            aligner.load_spots(self._manual_reference, self._manual_spots)
+            results = aligner.compute_all_alignments()
+        except ValueError as exc:
+            QMessageBox.warning(self, "Alignment Error", str(exc))
+            return
+
+        if not results:
+            QMessageBox.information(self, "No Spots", "No spots to move through.")
+            return
+
+        try:
+            current = self.motion_service.get_current_position()
+        except Exception as exc:
+            self.log(f"Cannot read stage position: {exc}", "error")
+            return
+
+        self.log(f"--- Move in Order: {len(results)} spot(s) ---", "info")
+        self._at_spot = False  # always treat first move as fresh
+
+        all_steps = []
+        cx, cy, cz = current.x, current.y, current.z
+
+        for i, result in enumerate(results):
+            tx, ty = aligner.stage_target(result, base_x, base_y)
+            self._log_alignment(result)
+            self.log(f"  Stage target: X={tx:.3f}  Y={ty:.3f} mm", "info")
+
+            if i == 0:
+                steps = aligner.first_spot_sequence(tx, ty, cx, cy, cz,
+                                                    label=result.label)
+            else:
+                steps = aligner.between_spot_sequence(tx, ty, cx, cy, cz,
+                                                      label=result.label)
+            all_steps.extend(steps)
+
+            # Update simulated position for next iteration's "current"
+            cz_raised = cz + aligner.Z_RAISE_MM if i > 0 else cz
+            cx, cy    = tx, ty
+            cz        = aligner.sfc_z + aligner.Z_APPROACH_OFFSET
+
+        self._run_steps(all_steps, f"S1–S{len(results)}")
 
     # ================================================================
     # Camera settings handlers
