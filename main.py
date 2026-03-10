@@ -178,12 +178,12 @@ class ManualSpotDialog(QDialog):
         self._spots.append({"label": label, "x": x, "y": y})
 
         r    = 10
-        pen  = QPen(QColor(0, 220, 0), 2)
-        fill = QBrush(QColor(0, 220, 0, 90))
+        pen  = QPen(QColor(0, 60, 180), 2)
+        fill = QBrush(QColor(0, 60, 180, 90))
         circle = self._scene.addEllipse(x - r, y - r, 2 * r, 2 * r, pen, fill)
 
         txt = self._scene.addText(label)
-        txt.setDefaultTextColor(QColor(0, 255, 0))
+        txt.setDefaultTextColor(QColor(30, 100, 255))
         fnt = QFont("Arial", 11, QFont.Weight.Bold)
         txt.setFont(fnt)
         txt.setPos(x + r + 2, y - 14)
@@ -547,6 +547,64 @@ class SimpleStageApp(QMainWindow):
         stage_layout.addLayout(goto_layout)
 
         settings_panel.addWidget(stage_group)
+
+        # Ref. Point group
+        ref_group  = QGroupBox("Ref. Point")
+        ref_group.setStyleSheet("QGroupBox { font-weight: bold; }")
+        ref_layout = QGridLayout(ref_group)
+        ref_layout.setSpacing(8)
+
+        _spin_style_default = ""
+        _spin_style_saved   = "QDoubleSpinBox { background-color: #1a4a1a; color: #6bcb77; }"
+
+        self.spin_ref_x = QDoubleSpinBox()
+        self.spin_ref_y = QDoubleSpinBox()
+        self.spin_ref_z = QDoubleSpinBox()
+        for row, (lbl, spin) in enumerate(
+            [("X (mm):", self.spin_ref_x),
+             ("Y (mm):", self.spin_ref_y),
+             ("Z (mm):", self.spin_ref_z)]
+        ):
+            spin.setRange(0.0, 300.0)
+            spin.setValue(0.0)
+            spin.setSingleStep(0.1)
+            spin.setDecimals(1)
+            spin.setMinimumWidth(80)
+            ref_layout.addWidget(QLabel(lbl), row, 0)
+            ref_layout.addWidget(spin, row, 1)
+
+        self._ref_point_saved: dict | None = None
+        self._ref_spin_style_saved = _spin_style_saved
+
+        btn_save_ref = QPushButton("Save")
+        btn_save_ref.setStyleSheet("font-weight: bold;")
+        ref_layout.addWidget(btn_save_ref, 3, 0, 1, 2)
+
+        def _on_save_ref_point() -> None:
+            self._ref_point_saved = {
+                "x": self.spin_ref_x.value(),
+                "y": self.spin_ref_y.value(),
+                "z": self.spin_ref_z.value(),
+            }
+            for spin in (self.spin_ref_x, self.spin_ref_y, self.spin_ref_z):
+                spin.setStyleSheet(_spin_style_saved)
+            self.log(
+                f"Ref. point saved: X={self._ref_point_saved['x']:.1f}  "
+                f"Y={self._ref_point_saved['y']:.1f}  "
+                f"Z={self._ref_point_saved['z']:.1f} mm",
+                "info",
+            )
+            # Reset green highlight when user edits a value afterwards
+            def _reset_style() -> None:
+                for s in (self.spin_ref_x, self.spin_ref_y, self.spin_ref_z):
+                    s.setStyleSheet("")
+                    s.valueChanged.disconnect(_reset_style)
+            for s in (self.spin_ref_x, self.spin_ref_y, self.spin_ref_z):
+                s.valueChanged.connect(_reset_style)
+
+        btn_save_ref.clicked.connect(_on_save_ref_point)
+        settings_panel.addWidget(ref_group)
+
         settings_panel.addStretch()
 
         # Image display
@@ -902,6 +960,9 @@ class SimpleStageApp(QMainWindow):
                 ip = dlg.image_path()
                 if ip:
                     self.log(f"Image saved: {ip}", "info")
+                    annotated = load_image(ip)
+                    if annotated is not None:
+                        self._show_image(annotated)
             else:
                 self.log("Manual spot detect: no spots marked.", "warn")
 
