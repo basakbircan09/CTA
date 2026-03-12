@@ -754,7 +754,7 @@ class SimpleStageApp(QMainWindow):
                 font-size: 14px;
             }
         """)
-        self.image_label.setMinimumSize(800, 500)
+        self.image_label.setMinimumSize(200, 200)
         middle_layout.addWidget(self.image_label, stretch=2)
 
         # ---- Log panel ----
