@@ -128,7 +128,7 @@ class ManualSpotDialog(QDialog):
     def __init__(self, image_bgr, save_dir: str, parent=None) -> None:
         super().__init__(parent)
         self.setWindowTitle("Manual Spot Detect  -  left-click to mark spots")
-        self.resize(1600, 1000)
+        self.resize(1100, 750)
 
         self._spots: list[dict] = []
         self._marker_items: list[tuple] = []   # (ellipse, text) per spot
@@ -192,6 +192,11 @@ class ManualSpotDialog(QDialog):
         layout.addWidget(self._view, stretch=1)
         layout.addLayout(top_bar)
         layout.addLayout(bot_bar)
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        # fitInView must run after the dialog has been laid out at full size
+        self._view.fitInView(self._scene.sceneRect(), Qt.KeepAspectRatio)
 
     # ------------------------------------------------------------------
     # Slot called by _SpotScene on left-click
@@ -377,6 +382,7 @@ class ForceSensorDisplay(QWidget):
         self._seq     = 0
         self._buf     = b""
         self._process = None
+        self.current_force_n: float = 0.0
         self._build_ui()
         self._start_bridge()
 
@@ -473,6 +479,7 @@ class ForceSensorDisplay(QWidget):
             self._send("start_stream", {"hz": self._STREAM_HZ})
 
     def _update_value(self, force_n: float):
+        self.current_force_n = force_n
         arrow = "↓" if force_n >= 0 else "↑"
         self._value_label.setText(f"{arrow} {abs(force_n):.3f} N")
         abs_f = abs(force_n)
@@ -497,6 +504,88 @@ class ForceSensorDisplay(QWidget):
             self._process.waitForFinished(2000)
             self._process.kill()
         super().closeEvent(event)
+
+
+# ---------------------------------------------------------------------------
+# Contact worker — runs the Z approach + descent sequence off the GUI thread
+# ---------------------------------------------------------------------------
+
+class ContactWorker(QThread):
+    """Move stage to Z=117, then step down 1 mm at a time until force > 2 N or Z <= 110."""
+
+    step_done   = Signal(float)   # emits current Z after each step
+    stopped     = Signal(str)     # emits reason: "force", "limit", "error", "aborted"
+    status_msg  = Signal(str)     # informational log messages
+
+    APPROACH_Z   = 117.0
+    STEP_MM      = 1.0
+    FORCE_THRESH = 2.0    # N  (absolute value)
+    Z_LIMIT      = 110.0
+
+    def __init__(self, motion_service, force_display: "ForceSensorDisplay", parent=None):
+        super().__init__(parent)
+        self._motion  = motion_service
+        self._force   = force_display
+        self._abort   = False
+
+    def abort(self) -> None:
+        self._abort = True
+
+    def run(self) -> None:
+        try:
+            # --- Phase 1: move to approach Z ---
+            self.status_msg.emit(f"Contact: moving to approach Z={self.APPROACH_Z} mm …")
+            pos = self._motion.get_current_position()
+            target = __import__("device_drivers.PI_Control_System.core.models",
+                                fromlist=["Position"]).Position(
+                x=pos.x, y=pos.y, z=self.APPROACH_Z
+            )
+            self._motion.move_to_position_safe_z(target).result(timeout=60)
+            if self._abort:
+                self.stopped.emit("aborted")
+                return
+
+            pos = self._motion.get_current_position()
+            self.step_done.emit(pos.z)
+            self.status_msg.emit(f"Contact: at approach Z={pos.z:.2f}. Beginning descent …")
+
+            # --- Phase 2: step down ---
+            while not self._abort:
+                pos = self._motion.get_current_position()
+                next_z = pos.z - self.STEP_MM
+
+                if next_z < self.Z_LIMIT:
+                    self.status_msg.emit(
+                        f"Contact: Z limit reached ({self.Z_LIMIT} mm) — stopping."
+                    )
+                    self.stopped.emit("limit")
+                    return
+
+                from device_drivers.PI_Control_System.core.models import Position as _Pos
+                step_target = _Pos(x=pos.x, y=pos.y, z=next_z)
+                self._motion.move_to_position_safe_z(step_target).result(timeout=30)
+
+                pos = self._motion.get_current_position()
+                self.step_done.emit(pos.z)
+
+                force = abs(self._force.current_force_n)
+                self.status_msg.emit(
+                    f"Contact: Z={pos.z:.2f} mm  |  Force={force:.3f} N"
+                )
+
+                if force > self.FORCE_THRESH:
+                    self.status_msg.emit(
+                        f"Contact: force threshold exceeded ({force:.3f} N > "
+                        f"{self.FORCE_THRESH} N) — stopping."
+                    )
+                    self.stopped.emit("force")
+                    return
+
+            self.stopped.emit("aborted")
+
+        except Exception as exc:
+            self.status_msg.emit(f"Contact error: {exc}")
+            self.stopped.emit("error")
 
 
 # ---------------------------------------------------------------------------
@@ -532,8 +621,17 @@ class SimpleStageApp(QMainWindow):
         self._align_worker: SpotAlignmentWorker | None = None
         self._current_spot_idx: int         = 0      # tracks next spot for Move Next Spot
 
+        # --- Contact state ---
+        self._contact_worker: "ContactWorker | None" = None
+
         # --- Positions ---
         self.park_position = Position(x=200.0, y=200.0, z=200.0)
+
+        # --- Position polling timer ---
+        self._pos_poll_timer = QTimer(self)
+        self._pos_poll_timer.setInterval(500)
+        self._pos_poll_timer.timeout.connect(self._poll_stage_position)
+        self._pos_poll_timer.start()
 
         # ================================================================
         # Window layout
@@ -786,6 +884,17 @@ class SimpleStageApp(QMainWindow):
         self.lbl_next_spot.setStyleSheet("color: #888; font-size: 11px;")
         move_spot_layout.addWidget(self.lbl_next_spot, 2, 0, 1, 3)
 
+        self.btn_contact = QPushButton("Contact")
+        self.btn_contact.setStyleSheet(
+            "font-weight: bold; background-color: #5a2d2d; color: white;"
+        )
+        self.btn_contact.setToolTip(
+            "Move stage to approach Z=117 mm, then step down 1 mm at a time.\n"
+            "Stops automatically when force sensor exceeds 2 N or Z reaches 110 mm."
+        )
+        self.btn_contact.clicked.connect(self.on_contact_clicked)
+        move_spot_layout.addWidget(self.btn_contact, 3, 0, 1, 3)
+
         settings_panel.addWidget(move_spot_group)
 
         # SFC Calibration group — values are fixed lab calibration constants
@@ -883,6 +992,27 @@ class SimpleStageApp(QMainWindow):
 
         self.force_display = ForceSensorDisplay(mock=True)
         bottom_layout.addWidget(self.force_display)
+
+        # Stage coordinates display (updates every 500 ms via _pos_poll_timer)
+        coords_group  = QGroupBox("Stage Position")
+        coords_group.setStyleSheet("QGroupBox { font-weight: bold; }")
+        coords_layout = QVBoxLayout(coords_group)
+        coords_layout.setContentsMargins(6, 4, 6, 4)
+        self.lbl_coords = QLabel("X = ?.??  mm\nY = ?.??  mm\nZ = ?.??  mm")
+        self.lbl_coords.setStyleSheet("""
+            QLabel {
+                font-family: monospace;
+                font-size: 12px;
+                color: #ccc;
+                padding: 4px;
+                background-color: #1a1a1a;
+                border-radius: 4px;
+            }
+        """)
+        self.lbl_coords.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        coords_layout.addWidget(self.lbl_coords)
+        coords_group.setFixedWidth(180)
+        bottom_layout.addWidget(coords_group)
 
         log_group  = QGroupBox("Log")
         log_group.setStyleSheet("QGroupBox { font-weight: bold; }")
@@ -1555,6 +1685,69 @@ class SimpleStageApp(QMainWindow):
         self._update_next_spot_label()
         self._run_steps(steps, spot_label)
 
+    # ------------------------------------------------------------------
+    # Contact — approach Z=117 then step down until force hit or Z limit
+    # ------------------------------------------------------------------
+
+    def on_contact_clicked(self) -> None:
+        # If already running, abort
+        if self._contact_worker and self._contact_worker.isRunning():
+            self._contact_worker.abort()
+            self.btn_contact.setText("Contact")
+            self.btn_contact.setStyleSheet(
+                "font-weight: bold; background-color: #5a2d2d; color: white;"
+            )
+            self.log("Contact: sequence aborted by user.", "warn")
+            return
+
+        if not self._is_stage_ready():
+            QMessageBox.warning(self, "Stage Not Ready",
+                "Connect and initialize the stage first.")
+            return
+
+        self.log("--- Contact sequence started ---", "info")
+        self.btn_contact.setText("Stop Contact")
+        self.btn_contact.setStyleSheet(
+            "font-weight: bold; background-color: #8b0000; color: white;"
+        )
+
+        self._contact_worker = ContactWorker(
+            self.motion_service, self.force_display, parent=self
+        )
+        self._contact_worker.status_msg.connect(lambda m: self.log(m, "info"))
+        self._contact_worker.step_done.connect(
+            lambda z: self.lbl_coords.setText(
+                self.lbl_coords.text().split("\n")[0] + "\n" +
+                self.lbl_coords.text().split("\n")[1] + "\n" +
+                f"Z = {z:.2f}  mm"
+            )
+        )
+        self._contact_worker.stopped.connect(self._on_contact_stopped)
+        self._contact_worker.start()
+
+    def _on_contact_stopped(self, reason: str) -> None:
+        self.btn_contact.setText("Contact")
+        self.btn_contact.setStyleSheet(
+            "font-weight: bold; background-color: #5a2d2d; color: white;"
+        )
+        if reason == "force":
+            QMessageBox.information(
+                self, "Contact",
+                "Contact detected!\nForce sensor exceeded 2 N. Stage stopped."
+            )
+            self.log("Contact: force threshold reached — stage stopped.", "info")
+        elif reason == "limit":
+            QMessageBox.warning(
+                self, "Contact — Z Limit Reached",
+                "Stage reached Z = 110 mm without detecting contact (force < 2 N).\n"
+                "Stage has been stopped. Please check the setup."
+            )
+            self.log("Contact: Z limit (110 mm) reached without force contact.", "warn")
+        elif reason == "aborted":
+            self.log("Contact: sequence aborted.", "warn")
+        else:
+            self.log(f"Contact: sequence ended with status '{reason}'.", "warn")
+
     # ================================================================
     # Camera settings handlers
     # ================================================================
@@ -1620,6 +1813,21 @@ class SimpleStageApp(QMainWindow):
             self.log(f"Position: X={pos.x:.2f} Y={pos.y:.2f} Z={pos.z:.2f}", "info")
         except Exception as exc:
             self.log(f"Get position error: {exc}", "error")
+
+    def _poll_stage_position(self) -> None:
+        """Called every 500 ms to keep the coordinates display up to date."""
+        if not self._is_stage_ready():
+            return
+        try:
+            pos = self.motion_service.get_current_position()
+            self.lbl_coords.setText(
+                f"X = {pos.x:.2f}  mm\nY = {pos.y:.2f}  mm\nZ = {pos.z:.2f}  mm"
+            )
+            self.pos_label.setText(
+                f"Position: X={pos.x:.2f}  Y={pos.y:.2f}  Z={pos.z:.2f}"
+            )
+        except Exception:
+            pass  # silently skip failed polls
 
     def on_jog_axis(self, axis: Axis, direction: int) -> None:
         if not self._is_stage_ready():
