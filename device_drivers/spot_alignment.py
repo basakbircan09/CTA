@@ -71,22 +71,27 @@ class SpotAligner:
     pixel_scale : float
         mm per pixel.  Default: PIXEL_SCALE_MM (0.094).
     invert_x, invert_y : bool
-        Flip axis direction to reconcile camera vs stage coordinate systems.
-        Camera: x increases rightward, y increases downward.
-        Stage:  X decreases going right, Y decreases going upward.
-        Both default to True (both axes inverted).  Keep configurable because
-        image orientation can vary with camera mounting.
+        Flip axis direction sign for stage X and Y respectively.
+        Both default to True.  Keep configurable because camera mounting
+        orientation can vary.
 
     Alignment math
     --------------
+    Lab-observed axis mapping (camera image vs stage):
+      Image X (horizontal pixel movement) → Stage Y
+      Image Y (vertical pixel movement)   → Stage X
+
     With stage at REF_STAGE (224.5, 229.5) the image is captured.
     The reference marker appears at pixel (x_ref, y_ref); spot at (x_spot, y_spot).
 
       dx_pixels = x_spot - x_ref
       dy_pixels = y_spot - y_ref
 
-      real_offset_x = sign_x * dx_pixels * pixel_scale   (sign_x = -1 if invert_x)
-      real_offset_y = sign_y * dy_pixels * pixel_scale
+      real_offset_x = sign_x * dy_pixels * pixel_scale   # pixel Y → stage X
+      real_offset_y = sign_y * dx_pixels * pixel_scale   # pixel X → stage Y
+
+      where sign_x = -1 if invert_x else +1
+            sign_y = -1 if invert_y else +1
 
     Absolute stage target to place the spot under the SFC opening:
 
@@ -250,8 +255,9 @@ class SpotAligner:
         sign_x = -1.0 if self.invert_x else 1.0
         sign_y = -1.0 if self.invert_y else 1.0
 
-        real_offset_x = sign_x * dx_pixels * self.pixel_scale
-        real_offset_y = sign_y * dy_pixels * self.pixel_scale
+        # Axis swap: image X (horizontal) → stage Y, image Y (vertical) → stage X
+        real_offset_x = sign_x * dy_pixels * self.pixel_scale
+        real_offset_y = sign_y * dx_pixels * self.pixel_scale
 
         # Absolute stage target: bring spot under SFC opening
         #   TARGET = SFC - real_offset
