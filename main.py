@@ -1262,13 +1262,12 @@ class SimpleStageApp(QMainWindow):
             )
 
     def _build_aligner(self) -> SpotAligner:
-        # invert_x/invert_y default to True (camera vs stage axis convention).
-        # The Flip checkboxes let the user toggle each axis without touching code.
-        # All calibration constants (SFC, REF_STAGE, PIXEL_SCALE) are hardcoded
-        # in spot_alignment.py and require no runtime configuration.
+        # invert_x=True by default (pixel Y up → stage X increases, needs sign flip).
+        # invert_y=False by default (pixel X right → stage Y decreases, no flip needed).
+        # "Flip X/Y" checkboxes override these defaults when axis direction is reversed.
         return SpotAligner(
             invert_x=not self.chk_flip_x.isChecked(),
-            invert_y=not self.chk_flip_y.isChecked(),
+            invert_y=self.chk_flip_y.isChecked(),
         )
 
     def _check_alignment_ready(self) -> bool:

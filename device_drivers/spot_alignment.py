@@ -106,7 +106,7 @@ class SpotAligner:
         self,
         pixel_scale: float = PIXEL_SCALE_MM,
         invert_x: bool = True,
-        invert_y: bool = True,
+        invert_y: bool = False,
     ) -> None:
         self.pixel_scale = pixel_scale
         self.invert_x    = invert_x
