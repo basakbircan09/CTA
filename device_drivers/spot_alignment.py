@@ -7,8 +7,14 @@ respect all Z-safety rules:
 
   1. Never move Z downward before XY alignment is complete.
   2. Always raise Z before moving between spots.
-  3. Always stop at SFC_Z + Z_APPROACH_OFFSET (default +5 mm) before contact.
+  3. Always stop at APPROACH_Z (SFC_Z + 5 mm) — never descend to SFC_Z here.
   4. Never go directly from spot-to-spot without lifting Z.
+
+Lab calibration values (fixed, measured on this machine):
+  SFC opening:       X=130.0  Y=17.0   Z=112.0  (absolute stage mm)
+  Approach height:   Z=117.0  (= SFC_Z + 5 mm — stop here for contact logic)
+  Ref stage position at image capture:  X=224.5  Y=229.5
+  Pixel scale:       0.094 mm / pixel
 """
 
 from __future__ import annotations
@@ -16,10 +22,18 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 # ---------------------------------------------------------------------------
-# Calibration constant
+# Lab calibration constants  (edit here when physically re-calibrated)
 # ---------------------------------------------------------------------------
 
-PIXEL_SCALE_MM: float = 0.094  # mm per pixel (fixed, factory-calibrated)
+PIXEL_SCALE_MM: float = 0.094   # mm per pixel
+
+SFC_X: float = 130.0            # absolute stage X of SFC opening
+SFC_Y: float =  17.0            # absolute stage Y of SFC opening
+SFC_Z: float = 112.0            # absolute stage Z of SFC opening
+APPROACH_Z: float = 117.0       # SFC_Z + 5.0 — approach / safe-stop height
+
+REF_STAGE_X: float = 224.5      # stage X when reference image was captured
+REF_STAGE_Y: float = 229.5      # stage Y when reference image was captured
 
 
 # ---------------------------------------------------------------------------
@@ -32,8 +46,8 @@ class AlignmentResult:
     label: str
     pixel_pos: tuple[int, int]           # absolute pixel position (x, y)
     pixel_offset: tuple[int, int]        # (dx, dy) relative to Reference pixel
-    real_offset_mm: tuple[float, float]  # pixel_offset converted to mm (with axis inversion)
-    stage_move_mm: tuple[float, float]   # delta stage movement from base position
+    real_offset_mm: tuple[float, float]  # pixel_offset → mm (with axis inversion)
+    stage_move_mm: tuple[float, float]   # delta from REF_STAGE to absolute target
 
 
 @dataclass
@@ -50,42 +64,48 @@ class MotionStep:
 # ---------------------------------------------------------------------------
 
 class SpotAligner:
-    """Convert pixel spot coordinates to stage movement commands.
+    """Convert pixel spot coordinates to absolute stage targets.
 
     Parameters
     ----------
-    holder_to_sfc_x, holder_to_sfc_y : float
-        Mechanical distance (mm) from the holder reference corner to the SFC
-        opening in X and Y.
-    sfc_z : float
-        Absolute Z coordinate (mm) of the SFC opening.
     pixel_scale : float
         mm per pixel.  Default: PIXEL_SCALE_MM (0.094).
     invert_x, invert_y : bool
         Flip axis direction to reconcile camera vs stage coordinate systems.
         Camera: x increases rightward, y increases downward.
         Stage:  X decreases going right, Y decreases going upward.
-        Both default to True (both axes inverted).
+        Both default to True (both axes inverted).  Keep configurable because
+        image orientation can vary with camera mounting.
+
+    Alignment math
+    --------------
+    With stage at REF_STAGE (224.5, 229.5) the image is captured.
+    The reference marker appears at pixel (x_ref, y_ref); spot at (x_spot, y_spot).
+
+      dx_pixels = x_spot - x_ref
+      dy_pixels = y_spot - y_ref
+
+      real_offset_x = sign_x * dx_pixels * pixel_scale   (sign_x = -1 if invert_x)
+      real_offset_y = sign_y * dy_pixels * pixel_scale
+
+    Absolute stage target to place the spot under the SFC opening:
+
+      TARGET_X = SFC_X - real_offset_x  →  130.0 - real_offset_x
+      TARGET_Y = SFC_Y - real_offset_y  →   17.0 - real_offset_y
+      TARGET_Z = APPROACH_Z             →  117.0  (never lower in this step)
     """
 
-    Z_RAISE_MM:        float = 20.0  # mm to lift Z when moving between spots
-    Z_APPROACH_OFFSET: float =  5.0  # mm above SFC Z at which to stop
+    Z_RAISE_MM: float = 20.0   # mm to lift Z when moving between spots
 
     def __init__(
         self,
-        holder_to_sfc_x: float,
-        holder_to_sfc_y: float,
-        sfc_z: float,
         pixel_scale: float = PIXEL_SCALE_MM,
         invert_x: bool = True,
         invert_y: bool = True,
     ) -> None:
-        self.holder_to_sfc_x = holder_to_sfc_x
-        self.holder_to_sfc_y = holder_to_sfc_y
-        self.sfc_z           = sfc_z
-        self.pixel_scale     = pixel_scale
-        self.invert_x        = invert_x
-        self.invert_y        = invert_y
+        self.pixel_scale = pixel_scale
+        self.invert_x    = invert_x
+        self.invert_y    = invert_y
 
         self._reference: dict | None = None
         self._spots: list[dict]      = []
@@ -125,22 +145,14 @@ class SpotAligner:
         self._require_loaded()
         return [self._compute(s) for s in self._spots]
 
-    def stage_target(
-        self,
-        result: AlignmentResult,
-        base_x: float,
-        base_y: float,
-    ) -> tuple[float, float]:
-        """Absolute stage XY target given a base reference stage position.
+    def stage_target(self, result: AlignmentResult) -> tuple[float, float]:
+        """Absolute stage XY target to place this spot under the SFC opening.
 
-        base_x/base_y is the stage position when the image was captured
-        (i.e. the position at which the Reference pixel was aligned to the
-        physical reference corner of the holder).
+        Returns (target_x, target_y) rounded to 3 decimal places.
         """
-        return (
-            round(base_x + result.stage_move_mm[0], 3),
-            round(base_y + result.stage_move_mm[1], 3),
-        )
+        tx = round(REF_STAGE_X + result.stage_move_mm[0], 3)
+        ty = round(REF_STAGE_Y + result.stage_move_mm[1], 3)
+        return tx, ty
 
     # ------------------------------------------------------------------
     # Motion sequences
@@ -157,22 +169,23 @@ class SpotAligner:
     ) -> list[MotionStep]:
         """Motion steps for reaching the very first spot from any position.
 
-        Rule: move XY first (at current Z), then lower Z to SFC_Z + offset.
-        Never lower Z before XY is done.
+        Rule: move XY first (at current Z), then lower Z to APPROACH_Z.
+        Never lower Z before XY is complete.
         """
-        z_final = self.sfc_z + self.Z_APPROACH_OFFSET
         return [
             MotionStep(
-                description=f"[{label}] Move XY to alignment position",
+                description=f"[{label}] Move XY to alignment position"
+                            f"  (target X={target_x:.3f}  Y={target_y:.3f} mm)",
                 target_x=target_x,
                 target_y=target_y,
                 target_z=current_z,          # keep Z unchanged during XY move
             ),
             MotionStep(
-                description=f"[{label}] Lower Z to SFC approach height ({z_final:.1f} mm)",
+                description=f"[{label}] Lower Z to approach height"
+                            f"  (Z={APPROACH_Z:.1f} mm — SFC opening at {SFC_Z:.1f} mm)",
                 target_x=target_x,
                 target_y=target_y,
-                target_z=z_final,
+                target_z=APPROACH_Z,
             ),
         ]
 
@@ -187,27 +200,74 @@ class SpotAligner:
     ) -> list[MotionStep]:
         """Motion steps for moving from one spot to the next.
 
-        Rule: raise Z first, then move XY, then lower Z.
+        Rule: raise Z first, then move XY, then lower Z to APPROACH_Z.
         """
         z_raised = current_z + self.Z_RAISE_MM
-        z_final  = self.sfc_z + self.Z_APPROACH_OFFSET
         return [
             MotionStep(
-                description=f"[{label}] Raise Z by {self.Z_RAISE_MM:.0f} mm (collision avoidance)",
+                description=f"[{label}] Raise Z by {self.Z_RAISE_MM:.0f} mm"
+                            f"  (collision avoidance → Z={z_raised:.1f} mm)",
                 target_x=current_x,
                 target_y=current_y,
                 target_z=z_raised,
             ),
             MotionStep(
-                description=f"[{label}] Move XY to alignment position",
+                description=f"[{label}] Move XY to alignment position"
+                            f"  (target X={target_x:.3f}  Y={target_y:.3f} mm)",
                 target_x=target_x,
                 target_y=target_y,
                 target_z=z_raised,           # XY at raised Z
             ),
             MotionStep(
-                description=f"[{label}] Lower Z to SFC approach height ({z_final:.1f} mm)",
+                description=f"[{label}] Lower Z to approach height"
+                            f"  (Z={APPROACH_Z:.1f} mm — SFC opening at {SFC_Z:.1f} mm)",
                 target_x=target_x,
                 target_y=target_y,
-                target_z=z_final,
+                target_z=APPROACH_Z,
             ),
         ]
+
+    # ------------------------------------------------------------------
+    # Private helpers
+    # ------------------------------------------------------------------
+
+    def _require_loaded(self) -> None:
+        if self._reference is None:
+            raise ValueError("No reference pixel loaded.  Call load_spots() first.")
+        if not self._spots:
+            raise ValueError("No spots loaded.  Call load_spots() first.")
+
+    def _compute(self, spot: dict) -> AlignmentResult:
+        """Core alignment math for one spot dict {"label", "x", "y"}."""
+        x_ref = self._reference["x"]
+        y_ref = self._reference["y"]
+        x_spot = spot["x"]
+        y_spot = spot["y"]
+
+        dx_pixels = x_spot - x_ref
+        dy_pixels = y_spot - y_ref
+
+        sign_x = -1.0 if self.invert_x else 1.0
+        sign_y = -1.0 if self.invert_y else 1.0
+
+        real_offset_x = sign_x * dx_pixels * self.pixel_scale
+        real_offset_y = sign_y * dy_pixels * self.pixel_scale
+
+        # Absolute stage target: bring spot under SFC opening
+        #   TARGET = SFC - real_offset
+        # (if spot is real_offset to the right of reference in stage coords,
+        #  we move less in X so the spot—not the reference—ends up at SFC)
+        target_x = SFC_X - real_offset_x
+        target_y = SFC_Y - real_offset_y
+
+        # Delta from REF_STAGE (used for logging and stage_target())
+        stage_move_x = target_x - REF_STAGE_X
+        stage_move_y = target_y - REF_STAGE_Y
+
+        return AlignmentResult(
+            label=spot["label"],
+            pixel_pos=(x_spot, y_spot),
+            pixel_offset=(dx_pixels, dy_pixels),
+            real_offset_mm=(round(real_offset_x, 3), round(real_offset_y, 3)),
+            stage_move_mm=(round(stage_move_x, 3), round(stage_move_y, 3)),
+        )

@@ -528,8 +528,6 @@ class SimpleStageApp(QMainWindow):
         # --- Alignment state ---
         self._manual_reference: dict | None = None   # REF pixel from ManualSpotDialog
         self._manual_spots: list[dict]      = []     # S1..Sn pixels from ManualSpotDialog
-        self._align_base_x: float | None    = None   # stage X when image was captured
-        self._align_base_y: float | None    = None   # stage Y when image was captured
         self._at_spot: bool                 = False  # True once the stage has reached a spot
         self._align_worker: SpotAlignmentWorker | None = None
         self._current_spot_idx: int         = 0      # tracks next spot for Move Next Spot
@@ -790,66 +788,34 @@ class SimpleStageApp(QMainWindow):
 
         settings_panel.addWidget(move_spot_group)
 
-        # SFC Calibration group
-        sfc_group  = QGroupBox("SFC Calibration")
+        # SFC Calibration group — values are fixed lab calibration constants
+        from device_drivers.spot_alignment import (
+            SFC_X as _SFC_X, SFC_Y as _SFC_Y, SFC_Z as _SFC_Z,
+            APPROACH_Z as _APPROACH_Z,
+            REF_STAGE_X as _REF_STAGE_X, REF_STAGE_Y as _REF_STAGE_Y,
+            PIXEL_SCALE_MM as _PIXEL_SCALE_MM,
+        )
+        sfc_group  = QGroupBox("SFC Calibration (fixed)")
         sfc_group.setStyleSheet("QGroupBox { font-weight: bold; }")
         sfc_layout = QGridLayout(sfc_group)
-        sfc_layout.setSpacing(6)
+        sfc_layout.setSpacing(4)
 
-        sfc_layout.addWidget(QLabel("Holder→SFC X (mm):"), 0, 0)
-        self.spin_sfc_offset_x = QDoubleSpinBox()
-        self.spin_sfc_offset_x.setRange(-400.0, 400.0)
-        self.spin_sfc_offset_x.setValue(0.0)
-        self.spin_sfc_offset_x.setSingleStep(0.1)
-        self.spin_sfc_offset_x.setDecimals(2)
-        sfc_layout.addWidget(self.spin_sfc_offset_x, 0, 1)
+        cal_style = "color: #aaa; font-size: 8pt;"
 
-        sfc_layout.addWidget(QLabel("Holder→SFC Y (mm):"), 1, 0)
-        self.spin_sfc_offset_y = QDoubleSpinBox()
-        self.spin_sfc_offset_y.setRange(-400.0, 400.0)
-        self.spin_sfc_offset_y.setValue(0.0)
-        self.spin_sfc_offset_y.setSingleStep(0.1)
-        self.spin_sfc_offset_y.setDecimals(2)
-        sfc_layout.addWidget(self.spin_sfc_offset_y, 1, 1)
+        def _cal_row(label_text, value_text, row):
+            lbl = QLabel(label_text)
+            val = QLabel(value_text)
+            val.setStyleSheet(cal_style)
+            sfc_layout.addWidget(lbl, row, 0)
+            sfc_layout.addWidget(val, row, 1)
 
-        sfc_layout.addWidget(QLabel("SFC Z (mm):"), 2, 0)
-        self.spin_sfc_z = QDoubleSpinBox()
-        self.spin_sfc_z.setRange(0.0, 400.0)
-        self.spin_sfc_z.setValue(0.0)
-        self.spin_sfc_z.setSingleStep(0.1)
-        self.spin_sfc_z.setDecimals(2)
-        sfc_layout.addWidget(self.spin_sfc_z, 2, 1)
-
-        sfc_layout.addWidget(QLabel("Ref Stage X (mm):"), 3, 0)
-        self.spin_base_x = QDoubleSpinBox()
-        self.spin_base_x.setRange(0.0, 400.0)
-        self.spin_base_x.setValue(200.0)
-        self.spin_base_x.setSingleStep(0.1)
-        self.spin_base_x.setDecimals(2)
-        self.spin_base_x.setToolTip(
-            "Stage X position when the image was captured\n"
-            "(i.e. where the holder reference corner sits on the stage)"
-        )
-        sfc_layout.addWidget(self.spin_base_x, 3, 1)
-
-        sfc_layout.addWidget(QLabel("Ref Stage Y (mm):"), 4, 0)
-        self.spin_base_y = QDoubleSpinBox()
-        self.spin_base_y.setRange(0.0, 400.0)
-        self.spin_base_y.setValue(200.0)
-        self.spin_base_y.setSingleStep(0.1)
-        self.spin_base_y.setDecimals(2)
-        self.spin_base_y.setToolTip(
-            "Stage Y position when the image was captured\n"
-            "(i.e. where the holder reference corner sits on the stage)"
-        )
-        sfc_layout.addWidget(self.spin_base_y, 4, 1)
-
-        btn_set_base = QPushButton("Read from Stage")
-        btn_set_base.setToolTip(
-            "Read current stage XY and store as the reference stage position"
-        )
-        btn_set_base.clicked.connect(self.on_set_alignment_base)
-        sfc_layout.addWidget(btn_set_base, 5, 0, 1, 2)
+        _cal_row("SFC X (mm):",        f"{_SFC_X:.1f}",          0)
+        _cal_row("SFC Y (mm):",        f"{_SFC_Y:.1f}",          1)
+        _cal_row("SFC Z (mm):",        f"{_SFC_Z:.1f}",          2)
+        _cal_row("Approach Z (mm):",   f"{_APPROACH_Z:.1f}",     3)
+        _cal_row("Ref stage X (mm):",  f"{_REF_STAGE_X:.1f}",    4)
+        _cal_row("Ref stage Y (mm):",  f"{_REF_STAGE_Y:.1f}",    5)
+        _cal_row("Pixel scale:",       f"{_PIXEL_SCALE_MM} mm/px", 6)
 
         settings_panel.addWidget(sfc_group)
 
@@ -1271,22 +1237,6 @@ class SimpleStageApp(QMainWindow):
             else:
                 self.log("Manual spot detect: no spots marked.", "warn")
 
-    def on_set_alignment_base(self) -> None:
-        """Read current stage XY and store as the alignment base position."""
-        if not self._is_stage_ready():
-            QMessageBox.warning(self, "Stage Not Ready",
-                "Connect and initialize the stage first.")
-            return
-        try:
-            pos = self.motion_service.get_current_position()
-            self.spin_base_x.setValue(pos.x)
-            self.spin_base_y.setValue(pos.y)
-            self._align_base_x = pos.x
-            self._align_base_y = pos.y
-            self.log(f"Alignment base set: X={pos.x:.2f}  Y={pos.y:.2f} mm", "info")
-        except Exception as exc:
-            self.log(f"Set base error: {exc}", "error")
-
     # ------------------------------------------------------------------
     # Alignment helpers
     # ------------------------------------------------------------------
@@ -1314,10 +1264,9 @@ class SimpleStageApp(QMainWindow):
     def _build_aligner(self) -> SpotAligner:
         # invert_x/invert_y default to True (camera vs stage axis convention).
         # The Flip checkboxes let the user toggle each axis without touching code.
+        # All calibration constants (SFC, REF_STAGE, PIXEL_SCALE) are hardcoded
+        # in spot_alignment.py and require no runtime configuration.
         return SpotAligner(
-            holder_to_sfc_x=self.spin_sfc_offset_x.value(),
-            holder_to_sfc_y=self.spin_sfc_offset_y.value(),
-            sfc_z=self.spin_sfc_z.value(),
             invert_x=not self.chk_flip_x.isChecked(),
             invert_y=not self.chk_flip_y.isChecked(),
         )
@@ -1339,21 +1288,32 @@ class SimpleStageApp(QMainWindow):
         return True
 
     def _log_alignment(self, result: AlignmentResult) -> None:
+        from device_drivers.spot_alignment import (
+            REF_STAGE_X as _REF_STAGE_X, REF_STAGE_Y as _REF_STAGE_Y,
+            APPROACH_Z as _APPROACH_Z,
+        )
         ppx, ppy = result.pixel_pos
         opx, opy = result.pixel_offset
         rx, ry   = result.real_offset_mm
         mx, my   = result.stage_move_mm
+        tx = round(_REF_STAGE_X + mx, 3)
+        ty = round(_REF_STAGE_Y + my, 3)
         self.log(
-            f"  {result.label}  Pixel pos:    ({ppx}, {ppy})", "info"
+            f"  {result.label}  Pixel pos:      ({ppx}, {ppy})", "info"
         )
         self.log(
-            f"  {result.label}  Pixel offset: dx={opx:+d}  dy={opy:+d}", "info"
+            f"  {result.label}  Pixel offset:   dx={opx:+d} px  dy={opy:+d} px", "info"
         )
         self.log(
-            f"  {result.label}  Real offset:  dx={rx:+.2f} mm  dy={ry:+.2f} mm", "info"
+            f"  {result.label}  Real offset:    dx={rx:+.3f} mm  dy={ry:+.3f} mm", "info"
         )
         self.log(
-            f"  {result.label}  Stage move:   X={mx:+.3f} mm  Y={my:+.3f} mm", "info"
+            f"  {result.label}  Stage ΔX/ΔY:    {mx:+.3f} mm  /  {my:+.3f} mm"
+            f"  (from ref stage {_REF_STAGE_X}, {_REF_STAGE_Y})", "info"
+        )
+        self.log(
+            f"  {result.label}  Stage target:   X={tx:.3f}  Y={ty:.3f}  Z={_APPROACH_Z:.1f} mm",
+            "info"
         )
 
     def _set_move_buttons_enabled(self, enabled: bool) -> None:
@@ -1415,9 +1375,6 @@ class SimpleStageApp(QMainWindow):
                 "No spots loaded yet. Run Manual Spot Detect first.")
             return
 
-        base_x = self.spin_base_x.value()
-        base_y = self.spin_base_y.value()
-
         aligner = self._build_aligner()
         try:
             aligner.load_spots(self._manual_reference, self._manual_spots)
@@ -1426,11 +1383,10 @@ class SimpleStageApp(QMainWindow):
             QMessageBox.warning(self, "Alignment Error", str(exc))
             return
 
-        target_x, target_y = aligner.stage_target(result, base_x, base_y)
+        target_x, target_y = aligner.stage_target(result)
 
         self.log(f"--- Computing alignment for {spot_label} ---", "info")
         self._log_alignment(result)
-        self.log(f"  Stage target: X={target_x:.3f}  Y={target_y:.3f} mm", "info")
 
         try:
             current = self.motion_service.get_current_position()
@@ -1463,6 +1419,7 @@ class SimpleStageApp(QMainWindow):
             f"Stage ΔY:      {my:+.3f} mm\n"
             f"Target X:      {target_x:.3f} mm\n"
             f"Target Y:      {target_y:.3f} mm\n"
+            f"Approach Z:    117.0 mm\n"
             f"Move distance: {move_dist:.2f} mm\n\n"
             "Move the stage?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
@@ -1520,8 +1477,6 @@ class SimpleStageApp(QMainWindow):
 
         spot       = self._manual_spots[self._current_spot_idx]
         spot_label = spot["label"]
-        base_x     = self.spin_base_x.value()
-        base_y     = self.spin_base_y.value()
 
         aligner = self._build_aligner()
         try:
@@ -1531,14 +1486,13 @@ class SimpleStageApp(QMainWindow):
             QMessageBox.warning(self, "Alignment Error", str(exc))
             return
 
-        target_x, target_y = aligner.stage_target(result, base_x, base_y)
+        target_x, target_y = aligner.stage_target(result)
 
         self.log(
             f"--- Next Spot ({self._current_spot_idx + 1}/{len(self._manual_spots)}): "
             f"{spot_label} ---", "info"
         )
         self._log_alignment(result)
-        self.log(f"  Stage target: X={target_x:.3f}  Y={target_y:.3f} mm", "info")
 
         try:
             current = self.motion_service.get_current_position()
@@ -1573,6 +1527,7 @@ class SimpleStageApp(QMainWindow):
             f"Stage ΔY:        {my:+.3f} mm\n"
             f"Target X:        {target_x:.3f} mm\n"
             f"Target Y:        {target_y:.3f} mm\n"
+            f"Approach Z:      117.0 mm\n"
             f"Move distance:   {move_dist:.2f} mm\n"
             f"Remaining after: {remaining} spot(s)\n\n"
             "Move the stage?",
