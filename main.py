@@ -427,9 +427,7 @@ class ForceSensorDisplay(QWidget):
         self._process = QProcess(self)
         self._process.readyReadStandardOutput.connect(self._on_stdout)
         self._process.started.connect(self._on_started)
-        self._process.errorOccurred.connect(
-            lambda: self._status_label.setText("Process error")
-        )
+        self._process.errorOccurred.connect(self._on_process_error)
 
         args = [str(_FORCE_BRIDGE), "--log-dir", str(Path(__file__).parent / "logs")]
         if self._mock:
@@ -487,6 +485,11 @@ class ForceSensorDisplay(QWidget):
         self._value_label.setStyleSheet(
             f"font-size: 22px; font-weight: 700; color: {color};"
         )
+
+    def _on_process_error(self):
+        if not self.isVisible():
+            return
+        self._status_label.setText("Process error")
 
     def closeEvent(self, event):
         if self._process and self._process.state() != QProcess.ProcessState.NotRunning:
