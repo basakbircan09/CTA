@@ -95,9 +95,9 @@ class SpotAligner:
 
     Absolute stage target to place the spot under the SFC opening:
 
-      TARGET_X = SFC_X - real_offset_x  →  130.0 - real_offset_x
-      TARGET_Y = SFC_Y - real_offset_y  →   17.0 - real_offset_y
-      TARGET_Z = APPROACH_Z             →  117.0  (never lower in this step)
+      TARGET_X = REF_STAGE_X - SFC_X - real_offset_x  →  94.5 - real_offset_x
+      TARGET_Y = REF_STAGE_Y - SFC_Y - real_offset_y  → 212.5 - real_offset_y
+      TARGET_Z = APPROACH_Z                            →  117.0  (never lower in this step)
     """
 
     Z_RAISE_MM: float = 20.0   # mm to lift Z when moving between spots
@@ -260,11 +260,10 @@ class SpotAligner:
         real_offset_y = sign_y * dx_pixels * self.pixel_scale
 
         # Absolute stage target: bring spot under SFC opening
-        #   TARGET = SFC - real_offset
-        # (if spot is real_offset to the right of reference in stage coords,
-        #  we move less in X so the spot—not the reference—ends up at SFC)
-        target_x = SFC_X - real_offset_x
-        target_y = SFC_Y - real_offset_y
+        #   TARGET_Y = REF_STAGE_Y + (ref_xPixel - spot_xPixel) * scale - SFC_Y
+        #   TARGET_X = REF_STAGE_X - (ref_yPixel - spot_yPixel) * scale - SFC_X
+        target_x = REF_STAGE_X - SFC_X - real_offset_x
+        target_y = REF_STAGE_Y - SFC_Y - real_offset_y
 
         # Delta from REF_STAGE (used for logging and stage_target())
         stage_move_x = target_x - REF_STAGE_X
