@@ -63,14 +63,19 @@ class PIAxisController(AxisController):
             return
 
         try:
+            # PI_GCS2_DLL_x64.dll exposes PI_ConnectRS232 (integer port) but not
+            # PI_ConnectRS232ByDevName (string port).  Extract the number from "COMx".
+            port_str = self._config.port  # e.g. "COM5"
+            port_num = int("".join(filter(str.isdigit, port_str)))
+
             self._device = GCSDevice()
             self._device.ConnectRS232(
-                comport=self._config.port,
+                comport=port_num,
                 baudrate=self._config.baud,
             )
             idn = self._device.qIDN().strip()
             self._connected = True
-            print(f"[{self._config.axis.value}] Connected on {self._config.port}: {idn}")
+            print(f"[{self._config.axis.value}] Connected on {port_str}: {idn}")
 
         except Exception as e:
             self._device = None
