@@ -1,3 +1,4 @@
+import json
 import math
 import os
 import sys
@@ -21,7 +22,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtGui import (
     QPixmap, QImage, QPen, QBrush, QColor, QFont, QPainter,
 )
-from PySide6.QtCore import Qt, QTimer, QThread, Signal, QRectF
+from PySide6.QtCore import Qt, QTimer, QThread, Signal, QRectF, QProcess
 
 # Hardware / vision imports
 from device_drivers.PI_Control_System.core.models import Axis, Position
@@ -345,6 +346,154 @@ class ManualSpotDialog(QDialog):
 
     def image_path(self) -> str | None:
         return getattr(self, "_image_path", None)
+
+
+# ---------------------------------------------------------------------------
+# Force sensor live display widget
+# ---------------------------------------------------------------------------
+
+_FORCE_BRIDGE = Path(__file__).parent / "ForceSensor" / "scripts" / "force_bridge.py"
+
+
+class ForceSensorDisplay(QWidget):
+    """Compact live force readout placed to the left of the log panel.
+
+    Launches force_bridge.py as a subprocess via QProcess, sends connect +
+    start_stream, and updates the displayed Newton value on every data_point.
+    Calibration: F(N) = -1.996 * (raw - 0.0360)
+    Warning threshold: 3.5 N  |  Critical threshold: 4.5 N
+    """
+
+    _CAL_SLOPE     = -1.996
+    _CAL_INTERCEPT =  0.0360
+    _WARN_N        =  3.5
+    _CRIT_N        =  4.5
+    _STREAM_HZ     =  20
+
+    def __init__(self, mock: bool = True, port: str = "COM8", parent=None):
+        super().__init__(parent)
+        self._mock    = mock
+        self._port    = port
+        self._seq     = 0
+        self._buf     = b""
+        self._process = None
+        self._build_ui()
+        self._start_bridge()
+
+    # ------------------------------------------------------------------
+    # UI
+    # ------------------------------------------------------------------
+
+    def _build_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(6, 4, 6, 4)
+        layout.setSpacing(2)
+
+        title = QLabel("Force Sensor")
+        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        title.setStyleSheet("color: #888; font-size: 9pt; font-weight: bold;")
+        layout.addWidget(title)
+
+        self._value_label = QLabel("--- N")
+        self._value_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._value_label.setStyleSheet(
+            "font-size: 22px; font-weight: 700; color: #555;"
+        )
+        layout.addWidget(self._value_label)
+
+        self._status_label = QLabel("Starting…")
+        self._status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._status_label.setStyleSheet("color: #666; font-size: 8pt;")
+        layout.addWidget(self._status_label)
+
+        self.setFixedWidth(160)
+        self.setStyleSheet("""
+            ForceSensorDisplay {
+                background-color: #1a1a1a;
+                border: 1px solid #333;
+                border-radius: 4px;
+            }
+        """)
+
+    # ------------------------------------------------------------------
+    # Bridge subprocess
+    # ------------------------------------------------------------------
+
+    def _start_bridge(self):
+        if not _FORCE_BRIDGE.exists():
+            self._status_label.setText("Bridge not found")
+            return
+
+        self._process = QProcess(self)
+        self._process.readyReadStandardOutput.connect(self._on_stdout)
+        self._process.started.connect(self._on_started)
+        self._process.errorOccurred.connect(
+            lambda: self._status_label.setText("Process error")
+        )
+
+        args = [str(_FORCE_BRIDGE), "--log-dir", str(Path(__file__).parent / "logs")]
+        if self._mock:
+            args.append("--mock")
+        else:
+            args += ["--port", self._port]
+
+        self._process.start(sys.executable, args)
+
+    def _send(self, action: str, params: dict | None = None):
+        if self._process is None:
+            return
+        self._seq += 1
+        cmd: dict = {"id": f"{action}-{self._seq}", "action": action}
+        if params:
+            cmd["params"] = params
+        self._process.write((json.dumps(cmd) + "\n").encode())
+
+    def _on_started(self):
+        self._status_label.setText("Connecting…")
+        self._send("connect")
+
+    def _on_stdout(self):
+        self._buf += bytes(self._process.readAllStandardOutput())
+        while b"\n" in self._buf:
+            line, self._buf = self._buf.split(b"\n", 1)
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                self._handle_msg(json.loads(line))
+            except Exception:
+                pass
+
+    def _handle_msg(self, msg: dict):
+        if msg.get("type") == "data_point":
+            raw     = msg["data"]["raw"]
+            force_n = self._CAL_SLOPE * (raw - self._CAL_INTERCEPT)
+            self._update_value(force_n)
+        elif msg.get("ok") and msg.get("action") == "connect":
+            label = "● Mock" if self._mock else "● Live"
+            self._status_label.setText(label)
+            self._send("start_stream", {"hz": self._STREAM_HZ})
+
+    def _update_value(self, force_n: float):
+        arrow = "↓" if force_n >= 0 else "↑"
+        self._value_label.setText(f"{arrow} {abs(force_n):.3f} N")
+        abs_f = abs(force_n)
+        if abs_f >= self._CRIT_N:
+            color = "#F44336"
+        elif abs_f >= self._WARN_N:
+            color = "#FF9800"
+        else:
+            color = "#2196F3"
+        self._value_label.setStyleSheet(
+            f"font-size: 22px; font-weight: 700; color: {color};"
+        )
+
+    def closeEvent(self, event):
+        if self._process and self._process.state() != QProcess.ProcessState.NotRunning:
+            self._send("shutdown")
+            self._process.waitForFinished(2000)
+            self._process.kill()
+        super().closeEvent(event)
 
 
 # ---------------------------------------------------------------------------
@@ -757,7 +906,15 @@ class SimpleStageApp(QMainWindow):
         self.image_label.setMinimumSize(200, 200)
         middle_layout.addWidget(self.image_label, stretch=2)
 
-        # ---- Log panel ----
+        # ---- Bottom bar: force display + log ----
+        bottom_widget = QWidget()
+        bottom_layout = QHBoxLayout(bottom_widget)
+        bottom_layout.setContentsMargins(0, 0, 0, 0)
+        bottom_layout.setSpacing(6)
+
+        self.force_display = ForceSensorDisplay(mock=True)
+        bottom_layout.addWidget(self.force_display)
+
         log_group  = QGroupBox("Log")
         log_group.setStyleSheet("QGroupBox { font-weight: bold; }")
         log_layout = QVBoxLayout(log_group)
@@ -775,7 +932,9 @@ class SimpleStageApp(QMainWindow):
             }
         """)
         log_layout.addWidget(self.log_widget)
-        outer_layout.addWidget(log_group)
+        bottom_layout.addWidget(log_group, stretch=1)
+
+        outer_layout.addWidget(bottom_widget)
 
         # ---- Wire buttons ----
         self.btn_connect.clicked.connect(self.on_connect_clicked)
