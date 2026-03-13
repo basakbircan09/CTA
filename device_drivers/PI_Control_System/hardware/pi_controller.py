@@ -55,7 +55,7 @@ class PIAxisController(AxisController):
         return self._initialized
 
     def connect(self) -> None:
-        """Connect via USB using serial number.
+        """Connect via RS-232 using COM port and baud rate.
 
         Source: legacy/PI_Control_GUI/hardware_controller.py:35-57
         """
@@ -64,16 +64,19 @@ class PIAxisController(AxisController):
 
         try:
             self._device = GCSDevice()
-            self._device.ConnectUSB(serialnum=self._config.serial)
+            self._device.ConnectRS232(
+                comport=self._config.port,
+                baudrate=self._config.baud,
+            )
             idn = self._device.qIDN().strip()
             self._connected = True
-            print(f"[{self._config.axis.value}] Connected: {idn}")
+            print(f"[{self._config.axis.value}] Connected on {self._config.port}: {idn}")
 
         except Exception as e:
             self._device = None
             raise ConnectionError(
                 f"Failed to connect to {self._config.axis.value} "
-                f"(S/N {self._config.serial}): {e}"
+                f"(port {self._config.port}): {e}"
             ) from e
 
     def disconnect(self) -> None:
