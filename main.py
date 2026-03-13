@@ -128,7 +128,7 @@ class ManualSpotDialog(QDialog):
     def __init__(self, image_bgr, save_dir: str, parent=None) -> None:
         super().__init__(parent)
         self.setWindowTitle("Manual Spot Detect  -  left-click to mark spots")
-        self.resize(1100, 750)
+        self.resize(1600, 1000)
 
         self._spots: list[dict] = []
         self._marker_items: list[tuple] = []   # (ellipse, text) per spot

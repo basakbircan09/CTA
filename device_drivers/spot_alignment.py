@@ -14,7 +14,7 @@ Lab calibration values (fixed, measured on this machine):
   SFC opening:       X=130.0  Y=17.0   Z=112.0  (absolute stage mm)
   Approach height:   Z=117.0  (= SFC_Z + 5 mm — stop here for contact logic)
   Ref stage position at image capture:  X=224.5  Y=229.5
-  Pixel scale:       0.094 mm / pixel
+  Pixel scale:       0.095 mm / pixel
 """
 
 from __future__ import annotations
@@ -25,7 +25,7 @@ from dataclasses import dataclass
 # Lab calibration constants  (edit here when physically re-calibrated)
 # ---------------------------------------------------------------------------
 
-PIXEL_SCALE_MM: float = 0.094   # mm per pixel
+PIXEL_SCALE_MM: float = 0.095   # mm per pixel
 
 SFC_X: float = 130.0            # absolute stage X of SFC opening
 SFC_Y: float =  17.0            # absolute stage Y of SFC opening
