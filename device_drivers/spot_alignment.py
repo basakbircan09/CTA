@@ -11,9 +11,9 @@ respect all Z-safety rules:
   4. Never go directly from spot-to-spot without lifting Z.
 
 Lab calibration values (fixed, measured on this machine):
-  SFC opening:       X=130.0  Y=17.0   Z=112.0  (absolute stage mm)
-  Approach height:   Z=117.0  (= SFC_Z + 5 mm — stop here for contact logic)
-  Ref stage position at image capture:  X=224.5  Y=229.5
+  SFC opening:       X=165.0  Y=17.0   Z=160.0  (absolute stage mm)
+  Approach height:   Z=165.0  (= SFC_Z + 5 mm — stop here for contact logic)
+  Ref stage position at image capture:  X=220.7  Y=218.0
   Pixel scale:       0.095 mm / pixel
 """
 
@@ -27,13 +27,13 @@ from dataclasses import dataclass
 
 PIXEL_SCALE_MM: float = 0.095   # mm per pixel
 
-SFC_X: float = 130.0            # absolute stage X of SFC opening
+SFC_X: float = 165.0            # absolute stage X of SFC opening
 SFC_Y: float =  17.0            # absolute stage Y of SFC opening
-SFC_Z: float = 112.0            # absolute stage Z of SFC opening
-APPROACH_Z: float = 117.0       # SFC_Z + 5.0 — approach / safe-stop height
+SFC_Z: float = 160.0            # absolute stage Z of SFC opening
+APPROACH_Z: float = 165.0       # SFC_Z + 5.0 — approach / safe-stop height
 
-REF_STAGE_X: float = 224.5      # stage X when reference image was captured
-REF_STAGE_Y: float = 229.5      # stage Y when reference image was captured
+REF_STAGE_X: float = 220.7      # stage X when reference image was captured
+REF_STAGE_Y: float = 218.0      # stage Y when reference image was captured
 
 
 # ---------------------------------------------------------------------------

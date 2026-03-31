@@ -30,7 +30,7 @@ from device_drivers.PI_Control_System.app_factory import create_services
 from device_drivers.thorlabs_camera_wrapper import ThorlabsCamera
 from device_drivers.GPT_Merge import analyze_plate_and_spots
 from device_drivers.spot_analysis.pipeline import run_spot_analysis
-from device_drivers.image_utils import load_image, save_image, bgr_to_rgb
+from device_drivers.image_utils import load_image, save_image, bgr_to_rgb, draw_spots_overlay
 from device_drivers.spot_alignment import SpotAligner, AlignmentResult
 
 
@@ -517,9 +517,9 @@ class ContactWorker(QThread):
     stopped     = Signal(str)     # emits reason: "force", "limit", "error", "aborted"
     status_msg  = Signal(str)     # informational log messages
 
-    APPROACH_Z   = 117.0
-    STEP_MM      = 1.0
-    FORCE_THRESH = 2.0    # N  (absolute value)
+    APPROACH_Z   = 165.0
+    STEP_MM      = 0.5
+    FORCE_THRESH = 2.5    # N  (absolute value)
     Z_LIMIT      = 110.0
 
     def __init__(self, motion_service, force_display: "ForceSensorDisplay", parent=None):
@@ -624,6 +624,10 @@ class SimpleStageApp(QMainWindow):
         # --- Contact state ---
         self._contact_worker: "ContactWorker | None" = None
 
+        # --- Manual overlay state ---
+        self._manual_image_bgr = None   # raw image stored for re-drawing overlay
+        self._in_next_sequence: bool = False  # True while auto-chaining spot moves
+
         # --- Positions ---
         self.park_position = Position(x=200.0, y=200.0, z=200.0)
 
@@ -637,7 +641,7 @@ class SimpleStageApp(QMainWindow):
         # Window layout
         # ================================================================
         self.setWindowTitle("CTA - Stage + Plate Check")
-        self.resize(1400, 850)
+        self.resize(1260, 765)
 
         central      = QWidget()
         outer_layout = QVBoxLayout(central)
@@ -889,8 +893,8 @@ class SimpleStageApp(QMainWindow):
             "font-weight: bold; background-color: #5a2d2d; color: white;"
         )
         self.btn_contact.setToolTip(
-            "Move stage to approach Z=117 mm, then step down 1 mm at a time.\n"
-            "Stops automatically when force sensor exceeds 2 N or Z reaches 110 mm."
+            "Move stage to approach Z=117 mm, then step down 0.5 mm at a time.\n"
+            "Stops automatically when force sensor exceeds 2.5 N or Z reaches 110 mm."
         )
         self.btn_contact.clicked.connect(self.on_contact_clicked)
         move_spot_layout.addWidget(self.btn_contact, 3, 0, 1, 3)
@@ -990,7 +994,7 @@ class SimpleStageApp(QMainWindow):
         bottom_layout.setContentsMargins(0, 0, 0, 0)
         bottom_layout.setSpacing(6)
 
-        self.force_display = ForceSensorDisplay(mock=True)
+        self.force_display = ForceSensorDisplay(mock=False)
         bottom_layout.addWidget(self.force_display)
 
         # Stage coordinates display (updates every 500 ms via _pos_poll_timer)
@@ -1345,8 +1349,10 @@ class SimpleStageApp(QMainWindow):
                 # Persist for alignment use
                 self._manual_reference  = ref
                 self._manual_spots      = spots
-                self._at_spot           = False   # reset motion state
-                self._current_spot_idx  = 0       # start from S1 on next Move Next
+                self._manual_image_bgr  = img          # keep raw image for overlay redraws
+                self._at_spot           = False
+                self._current_spot_idx  = 0
+                self._in_next_sequence  = False
                 self._refresh_spot_combo()
                 self._update_next_spot_label()
 
@@ -1358,12 +1364,9 @@ class SimpleStageApp(QMainWindow):
                 ep = dlg.excel_path()
                 if ep:
                     self.log(f"Excel saved:  {ep}", "info")
-                ip = dlg.image_path()
-                if ip:
-                    self.log(f"Image saved: {ip}", "info")
-                    annotated = load_image(ip)
-                    if annotated is not None:
-                        self._show_image(annotated)
+
+                # Draw overlay on the raw image and display it
+                self._draw_and_show_spot_overlay()
             else:
                 self.log("Manual spot detect: no spots marked.", "warn")
 
@@ -1390,6 +1393,21 @@ class SimpleStageApp(QMainWindow):
             self.lbl_next_spot.setText(
                 f"Next: {nxt}  ({self._current_spot_idx + 1}/{len(self._manual_spots)})"
             )
+
+    def _draw_and_show_spot_overlay(self) -> None:
+        """Redraw the spot overlay on the stored raw image and display it.
+
+        Reference = yellow, unvisited = blue, visited (idx < _current_spot_idx) = green.
+        """
+        if self._manual_image_bgr is None:
+            return
+        overlay = draw_spots_overlay(
+            self._manual_image_bgr,
+            self._manual_reference,
+            self._manual_spots,
+            self._current_spot_idx,   # indices 0.._current_spot_idx-1 are visited → green
+        )
+        self._show_image(overlay)
 
     def _build_aligner(self) -> SpotAligner:
         # invert_x=True by default (pixel Y up → stage X increases, needs sign flip).
@@ -1485,6 +1503,37 @@ class SimpleStageApp(QMainWindow):
         self._at_spot = True
         self.log(f"Arrived at {label}.", "info")
 
+        # Redraw overlay so this spot turns green
+        self._draw_and_show_spot_overlay()
+
+        # If we are in a chained sequence, prompt before moving to the next spot
+        if self._in_next_sequence:
+            if self._current_spot_idx < len(self._manual_spots):
+                next_label = self._manual_spots[self._current_spot_idx]["label"]
+                remaining  = len(self._manual_spots) - self._current_spot_idx
+                reply = QMessageBox.question(
+                    self, f"Arrived at {label}",
+                    f"Arrived at {label}.\n\n"
+                    f"Move to {next_label} next?\n"
+                    f"({remaining} spot(s) remaining)",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                )
+                if reply == QMessageBox.StandardButton.Yes:
+                    self._execute_next_spot_move()
+                else:
+                    self._in_next_sequence = False
+                    self.log(
+                        f"Sequence paused after {label}. "
+                        "Press 'Move Next Spot' to resume.", "warn"
+                    )
+            else:
+                self._in_next_sequence = False
+                QMessageBox.information(
+                    self, "Sequence Complete",
+                    f"All {len(self._manual_spots)} spot(s) visited."
+                )
+                self.log("All spots in sequence visited.", "info")
+
     def _on_align_error(self, msg: str) -> None:
         self._set_move_buttons_enabled(True)
         self.log(f"Alignment move error: {msg}", "error")
@@ -1548,7 +1597,7 @@ class SimpleStageApp(QMainWindow):
             f"Stage ΔY:      {my:+.3f} mm\n"
             f"Target X:      {target_x:.3f} mm\n"
             f"Target Y:      {target_y:.3f} mm\n"
-            f"Approach Z:    117.0 mm\n"
+            f"Approach Z:    165.0 mm\n"
             f"Move distance: {move_dist:.2f} mm\n\n"
             "Move the stage?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
@@ -1579,10 +1628,11 @@ class SimpleStageApp(QMainWindow):
     # ------------------------------------------------------------------
 
     def on_move_next_spot_clicked(self) -> None:
-        """Move to the next spot in sequence, one at a time.
+        """Start or resume the spot sequence.
 
-        Each press advances _current_spot_idx by one so the user must
-        review each step before the stage continues.
+        Shows a single confirmation dialog then begins chained movement:
+        after each arrival the user is asked before the stage moves to the
+        next spot (handled in _on_align_finished).
         """
         if not self._check_alignment_ready():
             return
@@ -1595,13 +1645,41 @@ class SimpleStageApp(QMainWindow):
             reply = QMessageBox.question(
                 self, "All Spots Visited",
                 f"All {len(self._manual_spots)} spot(s) have been visited.\n\n"
-                "Reset to start from S1 again?",
+                "Reset and start from the first spot again?",
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             )
             if reply == QMessageBox.StandardButton.Yes:
                 self._current_spot_idx = 0
                 self._at_spot = False
+                self._in_next_sequence = False
                 self._update_next_spot_label()
+                self._draw_and_show_spot_overlay()
+            return
+
+        first_label = self._manual_spots[self._current_spot_idx]["label"]
+        total       = len(self._manual_spots)
+        reply = QMessageBox.question(
+            self, f"Start sequence at {first_label}",
+            f"Begin spot sequence starting at {first_label} "
+            f"({self._current_spot_idx + 1} of {total}).\n\n"
+            "After arriving at each spot you will be asked before the stage\n"
+            "moves to the next one.\n\n"
+            "Start?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        self._in_next_sequence = True
+        self._execute_next_spot_move()
+
+    def _execute_next_spot_move(self) -> None:
+        """Move to self._manual_spots[_current_spot_idx] with no extra dialog.
+
+        Called by on_move_next_spot_clicked (first move) and by
+        _on_align_finished (subsequent moves in the chain).
+        """
+        if self._current_spot_idx >= len(self._manual_spots):
             return
 
         spot       = self._manual_spots[self._current_spot_idx]
@@ -1613,13 +1691,14 @@ class SimpleStageApp(QMainWindow):
             result = aligner.compute_alignment(spot_label)
         except ValueError as exc:
             QMessageBox.warning(self, "Alignment Error", str(exc))
+            self._in_next_sequence = False
             return
 
         target_x, target_y = aligner.stage_target(result)
 
         self.log(
-            f"--- Next Spot ({self._current_spot_idx + 1}/{len(self._manual_spots)}): "
-            f"{spot_label} ---", "info"
+            f"--- Moving to {spot_label} "
+            f"({self._current_spot_idx + 1}/{len(self._manual_spots)}) ---", "info"
         )
         self._log_alignment(result)
 
@@ -1627,9 +1706,9 @@ class SimpleStageApp(QMainWindow):
             current = self.motion_service.get_current_position()
         except Exception as exc:
             self.log(f"Cannot read stage position: {exc}", "error")
+            self._in_next_sequence = False
             return
 
-        # Safety limit check
         move_dist = math.hypot(target_x - current.x, target_y - current.y)
         max_move  = self.spin_max_move.value()
         if move_dist > max_move:
@@ -1642,31 +1721,9 @@ class SimpleStageApp(QMainWindow):
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             )
             if reply != QMessageBox.StandardButton.Yes:
-                self.log(f"Move Next ({spot_label}) cancelled (safety limit).", "warn")
+                self._in_next_sequence = False
+                self.log(f"Move to {spot_label} cancelled (safety limit).", "warn")
                 return
-
-        # Confirm dialog
-        mx, my = result.stage_move_mm
-        remaining = len(self._manual_spots) - self._current_spot_idx - 1
-        reply = QMessageBox.question(
-            self, f"Confirm Move → {spot_label}",
-            f"Spot:            {spot_label}  "
-            f"({self._current_spot_idx + 1} of {len(self._manual_spots)})\n"
-            f"Stage ΔX:        {mx:+.3f} mm\n"
-            f"Stage ΔY:        {my:+.3f} mm\n"
-            f"Target X:        {target_x:.3f} mm\n"
-            f"Target Y:        {target_y:.3f} mm\n"
-            f"Approach Z:      117.0 mm\n"
-            f"Move distance:   {move_dist:.2f} mm\n"
-            f"Remaining after: {remaining} spot(s)\n\n"
-            "Move the stage?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-        )
-        if reply != QMessageBox.StandardButton.Yes:
-            self.log(f"Move Next ({spot_label}) cancelled by user.", "warn")
-            return
-
-        self.log(f"--- Moving to {spot_label} ---", "info")
 
         if self._at_spot:
             steps = aligner.between_spot_sequence(
@@ -1733,7 +1790,7 @@ class SimpleStageApp(QMainWindow):
         if reason == "force":
             QMessageBox.information(
                 self, "Contact",
-                "Contact detected!\nForce sensor exceeded 2 N. Stage stopped."
+                "Contact detected!\nForce sensor exceeded 2.5 N. Stage stopped."
             )
             self.log("Contact: force threshold reached — stage stopped.", "info")
         elif reason == "limit":

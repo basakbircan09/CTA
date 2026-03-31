@@ -167,10 +167,10 @@ def detect_spots(image: np.ndarray, debug: dict = None):
 # ---------------------------------------------------------------------------
 
 def sort_and_label(spots: list) -> list:
-    """Sort spots into rows by Y-coordinate and assign grid labels.
+    """Sort spots top-to-bottom, left-to-right and assign sequential labels.
 
-    Labels follow the pattern A1, A2, …, B1, B2, … where rows are
-    top-to-bottom (A = top) and columns are left-to-right.
+    Labels follow the pattern AS1, AS2, AS3, … reading the grid in
+    row-major order (top row left→right, then next row, etc.).
 
     Mutates each spot dict in-place by adding a ``"label"`` key.
     Returns the same list reordered.
@@ -195,9 +195,11 @@ def sort_and_label(spots: list) -> list:
             rows.append([s])
 
     labeled: list = []
-    for r, row in enumerate(rows):
-        for c, s in enumerate(sorted(row, key=lambda s: s["center"][0])):
-            s["label"] = f"{chr(65 + r)}{c + 1}"
+    idx = 1
+    for row in rows:
+        for s in sorted(row, key=lambda s: s["center"][0]):
+            s["label"] = f"AS{idx}"
+            idx += 1
             labeled.append(s)
 
     return labeled
@@ -208,36 +210,25 @@ def sort_and_label(spots: list) -> list:
 # ---------------------------------------------------------------------------
 
 def find_missing_spots(labeled_spots: list) -> list[str]:
-    """Detect gaps in the expected spot grid.
+    """Detect gaps in the sequential AS1, AS2, … spot numbering.
 
-    Builds a row/column map from existing labels, determines the expected
-    rectangular grid, and returns labels that are absent.
+    Since labels are assigned sequentially (AS1, AS2, AS3, …) any gap
+    means a detection failure between two numbered spots.
 
-    Example: if the grid has A1, A2, A4 and B1, B2, B3 it returns ["A3"].
+    Example: if detected spots are AS1, AS3, AS4 it returns ["AS2"].
     """
     if not labeled_spots:
         return []
 
-    rows: dict[str, set] = {}
+    nums: list[int] = []
     for s in labeled_spots:
-        label = s.get("label", "")
-        if len(label) < 2:
-            continue
-        row_char = label[0]
-        col_str = label[1:]
-        if col_str.isdigit():
-            rows.setdefault(row_char, set()).add(int(col_str))
+        lbl = s.get("label", "")
+        if lbl.startswith("AS") and lbl[2:].isdigit():
+            nums.append(int(lbl[2:]))
 
-    if not rows:
+    if not nums:
         return []
 
-    max_col = max(max(cols) for cols in rows.values())
-
-    missing: list[str] = []
-    for row_char in sorted(rows.keys()):
-        present = rows[row_char]
-        for col in range(1, max_col + 1):
-            if col not in present:
-                missing.append(f"{row_char}{col}")
-
-    return missing
+    present = set(nums)
+    max_num = max(nums)
+    return [f"AS{i}" for i in range(1, max_num + 1) if i not in present]
