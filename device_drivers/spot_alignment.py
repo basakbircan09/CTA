@@ -27,13 +27,13 @@ from dataclasses import dataclass
 
 PIXEL_SCALE_MM: float = 0.095   # mm per pixel
 
-SFC_X: float = 130.0            # absolute stage X of SFC opening
-SFC_Y: float =  17.0            # absolute stage Y of SFC opening
-SFC_Z: float = 112.0            # absolute stage Z of SFC opening
-APPROACH_Z: float = 117.0       # SFC_Z + 5.0 — approach / safe-stop height
+SFC_X: float = 170.0            # absolute stage X of SFC opening
+SFC_Y: float =  18.0            # absolute stage Y of SFC opening
+SFC_Z: float = 157.0            # absolute stage Z of SFC opening
+APPROACH_Z: float = 157.0       # SFC_Z + 5.0 — approach / safe-stop height
 
-REF_STAGE_X: float = 224.5      # stage X when reference image was captured
-REF_STAGE_Y: float = 229.5      # stage Y when reference image was captured
+REF_STAGE_X: float = 217.7      # stage X when reference image was captured
+REF_STAGE_Y: float = 218      # stage Y when reference image was captured
 
 
 # ---------------------------------------------------------------------------

@@ -517,10 +517,10 @@ class ContactWorker(QThread):
     stopped     = Signal(str)     # emits reason: "force", "limit", "error", "aborted"
     status_msg  = Signal(str)     # informational log messages
 
-    APPROACH_Z   = 117.0
-    STEP_MM      = 1.0
-    FORCE_THRESH = 2.0    # N  (absolute value)
-    Z_LIMIT      = 110.0
+    APPROACH_Z   = 160.0
+    STEP_MM      = 0.5
+    FORCE_THRESH = 2.5    # N  (absolute value)
+    Z_LIMIT      = 153.0
 
     def __init__(self, motion_service, force_display: "ForceSensorDisplay", parent=None):
         super().__init__(parent)
