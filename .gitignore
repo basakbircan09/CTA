@@ -9,6 +9,16 @@ venv/
 __pycache__/
 *.pyc
 
+# Claude Code local config
+.claude/
+
 # Ignore data/output
 data/
 *.log
+
+# Archive and build artifacts
+_archive/
+artifacts/
+*.egg-info/
+dist/
+build/

@@ -1,11 +1,19 @@
 import math
 import os
 import sys
+import os
 from pathlib import Path
 from openpyxl import Workbook
 
 # Set up project root and paths FIRST
 PROJECT_ROOT = Path(__file__).parent
+
+# DLL paths — must be set before importing PI libraries
+PI_DLL_DIR = PROJECT_ROOT / "lib" / "pi_dlls"
+if PI_DLL_DIR.exists():
+    os.add_dll_directory(str(PI_DLL_DIR))
+    os.environ["PATH"] = str(PI_DLL_DIR) + os.pathsep + os.environ.get("PATH", "")
+
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
