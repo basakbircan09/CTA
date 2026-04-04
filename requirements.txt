@@ -1,6 +1,10 @@
 PySide6
-opencv-python
-numpy
-openpyxl
 pipython
+numpy
 pylablib
+opencv-python
+scikit-image
+PyYAML
+tifffile
+pytest
+pytest-qt

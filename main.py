@@ -2,11 +2,19 @@ import json
 import math
 import os
 import sys
+import os
 from pathlib import Path
 from openpyxl import Workbook
 
 # Set up project root and paths FIRST
 PROJECT_ROOT = Path(__file__).parent
+
+# DLL paths — must be set before importing PI libraries
+PI_DLL_DIR = PROJECT_ROOT / "lib" / "pi_dlls"
+if PI_DLL_DIR.exists():
+    os.add_dll_directory(str(PI_DLL_DIR))
+    os.environ["PATH"] = str(PI_DLL_DIR) + os.pathsep + os.environ.get("PATH", "")
+
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
@@ -55,6 +63,28 @@ class SpotAnalysisWorker(QThread):
                 output_dir=self.output_dir,
                 export_excel=True,
             )
+            self.finished.emit(result)
+        except Exception as exc:
+            self.error.emit(str(exc))
+
+
+# ---------------------------------------------------------------------------
+# Background worker for WE GPT (GPT_Merge-based spot detection)
+# ---------------------------------------------------------------------------
+
+class WeGptWorker(QThread):
+    """Run analyze_plate_and_spots() in a background thread."""
+    finished = Signal(dict)
+    error    = Signal(str)
+
+    def __init__(self, image_path: str, output_dir: str) -> None:
+        super().__init__()
+        self.image_path = image_path
+        self.output_dir = output_dir
+
+    def run(self) -> None:
+        try:
+            result = analyze_plate_and_spots(self.image_path, self.output_dir)
             self.finished.emit(result)
         except Exception as exc:
             self.error.emit(str(exc))
@@ -613,6 +643,7 @@ class SimpleStageApp(QMainWindow):
         self.last_image_path: str | None = None
         self.last_plate_path: str | None = None
         self._we_worker: SpotAnalysisWorker | None = None
+        self._we_gpt_worker: QThread | None = None
 
         # --- Alignment state ---
         self._manual_reference: dict | None = None   # REF pixel from ManualSpotDialog
@@ -680,11 +711,12 @@ class SimpleStageApp(QMainWindow):
         self.btn_capture      = QPushButton("Capture")
         self.btn_plate        = QPushButton("Plate Detect")
         self.btn_we           = QPushButton("WE Detect")
+        self.btn_we_gpt       = QPushButton("WE GPT")
         self.btn_manual_spot  = QPushButton("Manual Spot Detect")
 
         for btn in [self.btn_connect, self.btn_init, self.btn_cam_start,
                     self.btn_capture, self.btn_plate, self.btn_we,
-                    self.btn_manual_spot]:
+                    self.btn_we_gpt, self.btn_manual_spot]:
             btn.setStyleSheet(btn_style)
             toolbar_layout.addWidget(btn)
 
@@ -1042,6 +1074,7 @@ class SimpleStageApp(QMainWindow):
         self.btn_capture.clicked.connect(self.on_capture_clicked)
         self.btn_plate.clicked.connect(self.on_plate_clicked)
         self.btn_we.clicked.connect(self.on_we_clicked)
+        self.btn_we_gpt.clicked.connect(self.on_we_gpt_clicked)
         self.btn_manual_spot.clicked.connect(self.on_manual_spot_clicked)
 
     # ================================================================
@@ -1320,6 +1353,74 @@ class SimpleStageApp(QMainWindow):
         self.btn_we.setText("WE Detect")
         self.log(f"WE detection error: {error_msg}", "error")
         QMessageBox.critical(self, "WE Detection Error", error_msg)
+
+    # ------------------------------------------------------------------
+    # WE GPT – GPT_Merge-based spot detection
+    # ------------------------------------------------------------------
+
+    def on_we_gpt_clicked(self) -> None:
+        image_path = self.last_plate_path
+
+        if not image_path:
+            self.log("No plate image available. Select manually?", "warn")
+            reply = QMessageBox.question(
+                self, "WE GPT Detection",
+                "No plate image available.\n\nSelect an image manually?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            )
+            if reply != QMessageBox.StandardButton.Yes:
+                return
+            image_path = self._pick_image_file("Select image for WE GPT detection")
+            if not image_path:
+                self.log("WE GPT detection cancelled.", "warn")
+                return
+            self.log(f"WE GPT detection using: {image_path}", "info")
+        else:
+            self.log(f"WE GPT detection using plate image: {image_path}", "info")
+
+        save_dir = str(PROJECT_ROOT / "artifacts" / "we_gpt_detection")
+
+        self.btn_we_gpt.setEnabled(False)
+        self.btn_we_gpt.setText("WE GPT (running...)")
+
+        self._we_gpt_worker = WeGptWorker(image_path, save_dir)
+        self._we_gpt_worker.finished.connect(self._on_we_gpt_finished)
+        self._we_gpt_worker.error.connect(self._on_we_gpt_error)
+        self._we_gpt_worker.start()
+
+    def _on_we_gpt_finished(self, result: dict) -> None:
+        self.btn_we_gpt.setEnabled(True)
+        self.btn_we_gpt.setText("WE GPT")
+
+        if result.get("error"):
+            self.log(f"WE GPT error: {result['error']}", "warn")
+            QMessageBox.warning(self, "WE GPT Detection", result["error"])
+            return
+
+        overlay = result.get("all_spots_image")
+        if overlay is not None:
+            self._show_image(overlay)
+
+        total    = len(result.get("all_spots", []))
+        accepted = len(result.get("accepted_spots", []))
+        rejected = len(result.get("rejected_spots", []))
+
+        self.log(f"[WE GPT] Detected spots: {total}", "info")
+        self.log(f"[WE GPT] Accepted:        {accepted}", "info")
+        self.log(f"[WE GPT] Rejected:        {rejected}", "warn" if rejected else "info")
+
+        if rejected == 0:
+            QMessageBox.information(self, "WE GPT Detection",
+                f"All {accepted} spot(s) accepted. No defects detected.")
+        else:
+            QMessageBox.warning(self, "WE GPT Detection",
+                f"Detected: {total}  Accepted: {accepted}  Rejected: {rejected}")
+
+    def _on_we_gpt_error(self, error_msg: str) -> None:
+        self.btn_we_gpt.setEnabled(True)
+        self.btn_we_gpt.setText("WE GPT")
+        self.log(f"WE GPT detection error: {error_msg}", "error")
+        QMessageBox.critical(self, "WE GPT Detection Error", error_msg)
 
     def on_manual_spot_clicked(self) -> None:
         """Open the interactive spot-picker dialog on the current image."""
@@ -1888,6 +1989,10 @@ class SimpleStageApp(QMainWindow):
         if self._we_worker and self._we_worker.isRunning():
             self._we_worker.quit()
             self._we_worker.wait(3000)
+
+        if self._we_gpt_worker and self._we_gpt_worker.isRunning():
+            self._we_gpt_worker.quit()
+            self._we_gpt_worker.wait(3000)
 
         try:
             if self.camera.is_connected:

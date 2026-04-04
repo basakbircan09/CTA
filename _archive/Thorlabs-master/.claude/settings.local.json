@@ -1,0 +1,20 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cp:*)",
+      "Bash(python -m pip install:*)",
+      "Bash(python test_camera_connection.py:*)",
+      "Bash(python setup.py:*)",
+      "WebSearch",
+      "Bash(python -m pip show:*)",
+      "WebFetch(domain:pylablib.readthedocs.io)",
+      "WebFetch(domain:github.com)",
+      "Bash(curl:*)",
+      "Bash(python -c:*)",
+      "Bash(python:*)",
+      "Bash(tree:*)",
+      "Bash(git add:*)"
+    ]
+  },
+  "outputStyle": "concise-technical"
+}
