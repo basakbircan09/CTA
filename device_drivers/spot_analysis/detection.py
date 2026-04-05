@@ -10,7 +10,7 @@ from .config import (
     DEFAULT_OPEN_KERNEL, DEFAULT_CLOSE_KERNEL,
     DEFAULT_MIN_SPOT_AREA, DEFAULT_MAX_SPOT_AREA,
     DEFAULT_MIN_CIRCULARITY, DEFAULT_MIN_SOLIDITY,
-    DEFAULT_MM_PER_PIXEL, DEFAULT_MIN_SPOT_DIAMETER_MM,
+    DEFAULT_PLATE_WIDTH_MM, DEFAULT_MIN_SPOT_DIAMETER_MM,
 )
 
 
@@ -56,13 +56,21 @@ def preprocess_for_detection(bgr: np.ndarray, debug: dict = None) -> np.ndarray:
 def detect_spots(image: np.ndarray, debug: dict = None):
     """Detect circular working-electrode spots in a plate image.
 
+    mm_per_pixel is computed dynamically as DEFAULT_PLATE_WIDTH_MM divided by
+    the image width in pixels, so the physical scale adapts to any crop size.
+
     Returns:
         spots            – list of accepted spot dicts
         rejected         – list of candidate dicts that failed filters
-        pdbg             – dict of intermediate debug images
+        pdbg             – dict of intermediate debug images (includes
+                           total_contours and mm_per_pixel)
     """
     pdbg: dict = {}
     norm = preprocess_for_detection(image, debug=pdbg)
+
+    # Physical scale: plate width in mm / image width in pixels
+    crop_width_px = image.shape[1]
+    mm_per_pixel  = DEFAULT_PLATE_WIDTH_MM / crop_width_px
 
     blur = cv2.GaussianBlur(norm, (5, 5), 0)
 
@@ -93,16 +101,19 @@ def detect_spots(image: np.ndarray, debug: dict = None):
     else:
         closed = opened.copy()
 
-    if debug is not None:
-        debug.update(pdbg)
-        debug["blur"] = blur
-        debug["thresh_bw"] = thresh
-        debug["opened"] = opened
-        debug["closed"] = closed
-
     contours, _ = cv2.findContours(
         closed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
     )
+
+    if debug is not None:
+        debug.update(pdbg)
+        debug["blur"]             = blur
+        debug["thresh_bw"]        = thresh
+        debug["opened"]           = opened
+        debug["closed"]           = closed
+        debug["total_contours"]   = len(contours)
+        debug["mm_per_pixel"]     = mm_per_pixel
+        debug["crop_width_px"]    = crop_width_px
 
     spots: list = []
     rejected: list = []
@@ -112,10 +123,11 @@ def detect_spots(image: np.ndarray, debug: dict = None):
         peri = float(cv2.arcLength(c, True))
         circ = 0.0 if peri <= 1e-6 else 4.0 * np.pi * area / (peri ** 2)
 
-        hull = cv2.convexHull(c)
+        hull      = cv2.convexHull(c)
         hull_area = float(cv2.contourArea(hull))
-        solidity = 0.0 if hull_area <= 1e-6 else area / hull_area
+        solidity  = 0.0 if hull_area <= 1e-6 else area / hull_area
 
+        # ---- Geometric filters ----
         reason = None
         if not (DEFAULT_MIN_SPOT_AREA <= area <= DEFAULT_MAX_SPOT_AREA):
             reason = "area"
@@ -130,41 +142,48 @@ def detect_spots(image: np.ndarray, debug: dict = None):
 
         if reason:
             rejected.append({
-                "contour": c,
-                "reason": reason,
-                "area": area,
-                "circularity": circ,
-                "solidity": solidity,
+                "contour":      c,
+                "reason":       reason,
+                "area":         area,
+                "circularity":  circ,
+                "solidity":     solidity,
+                "passed_geom":  False,
+                "passed_size":  False,
             })
             continue
 
         # ---- Physical size filter (SFC opening criterion) ----
-        # Use minEnclosingCircle for a stable radius estimate independent of
-        # contour irregularities.
+        # Use minEnclosingCircle for a radius estimate that is stable
+        # against contour irregularities.
         (_, radius_px) = cv2.minEnclosingCircle(c)
-        radius_mm   = float(radius_px) * DEFAULT_MM_PER_PIXEL
+        radius_mm   = float(radius_px) * mm_per_pixel
         diameter_mm = 2.0 * radius_mm
+
         if diameter_mm < DEFAULT_MIN_SPOT_DIAMETER_MM:
             rejected.append({
-                "contour":    c,
-                "reason":     "too_small_physical",
-                "area":       area,
-                "circularity": circ,
-                "solidity":   solidity,
-                "radius_px":  float(radius_px),
-                "radius_mm":  radius_mm,
-                "diameter_mm": diameter_mm,
+                "contour":      c,
+                "reason":       "too_small_physical",
+                "area":         area,
+                "circularity":  circ,
+                "solidity":     solidity,
+                "radius_px":    float(radius_px),
+                "radius_mm":    radius_mm,
+                "diameter_mm":  diameter_mm,
+                "passed_geom":  True,
+                "passed_size":  False,
             })
             continue
 
         M = cv2.moments(c)
         if M["m00"] == 0:
             rejected.append({
-                "contour": c,
-                "reason": "zero_moment",
-                "area": area,
+                "contour":     c,
+                "reason":      "zero_moment",
+                "area":        area,
                 "circularity": circ,
-                "solidity": solidity,
+                "solidity":    solidity,
+                "passed_geom": True,
+                "passed_size": True,
             })
             continue
 
@@ -172,14 +191,16 @@ def detect_spots(image: np.ndarray, debug: dict = None):
         cy = int(M["m01"] / M["m00"])
 
         spots.append({
-            "contour":    c,
-            "center":     (cx, cy),
-            "area":       area,
-            "circularity": circ,
-            "solidity":   solidity,
-            "radius_px":  float(radius_px),
-            "radius_mm":  radius_mm,
-            "diameter_mm": diameter_mm,
+            "contour":      c,
+            "center":       (cx, cy),
+            "area":         area,
+            "circularity":  circ,
+            "solidity":     solidity,
+            "radius_px":    float(radius_px),
+            "radius_mm":    radius_mm,
+            "diameter_mm":  diameter_mm,
+            "passed_geom":  True,
+            "passed_size":  True,
         })
 
     return spots, rejected, pdbg
@@ -247,7 +268,7 @@ def find_missing_spots(labeled_spots: list) -> list[str]:
         if len(label) < 2:
             continue
         row_char = label[0]
-        col_str = label[1:]
+        col_str  = label[1:]
         if col_str.isdigit():
             rows.setdefault(row_char, set()).add(int(col_str))
 
