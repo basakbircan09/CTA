@@ -194,6 +194,7 @@ def run_once(image: np.ndarray, run: dict) -> dict:
         cx, cy = s["center"]
         per_spot_rows.append({
             "spot_index":      i,
+            "label":           s.get("label", ""),
             "center_x":        cx,
             "center_y":        cy,
             "radius_px":       round(s.get("radius_px", 0.0), 2),
@@ -213,6 +214,7 @@ def run_once(image: np.ndarray, run: dict) -> dict:
     for r in geom_rejected:
         per_spot_rows.append({
             "spot_index":      None,
+            "label":           "—",
             "center_x":        None,
             "center_y":        None,
             "radius_px":       round(r.get("radius_px", 0.0), 2),
@@ -228,6 +230,7 @@ def run_once(image: np.ndarray, run: dict) -> dict:
     for r in size_rejected:
         per_spot_rows.append({
             "spot_index":      None,
+            "label":           "—",
             "center_x":        None,
             "center_y":        None,
             "radius_px":       round(r.get("radius_px", 0.0), 2),
@@ -373,7 +376,7 @@ def build_excel(summary_rows: list, per_spot_rows_all: list, run_configs: list):
     ws2 = wb.create_sheet("Per-Spot Detail")
 
     s2_headers = [
-        "Run", "Spot Index", "Center X (px)", "Center Y (px)",
+        "Run", "Spot Index", "Spot Label", "Center X (px)", "Center Y (px)",
         "Radius (px)", "Diameter (mm)",
         "Passed Geometry", "Passed Size", "Passed Defect",
         "Final Status", "Rejection Reason",
@@ -388,6 +391,7 @@ def build_excel(summary_rows: list, per_spot_rows_all: list, run_configs: list):
             vals = [
                 run_id,
                 sp["spot_index"] if sp["spot_index"] is not None else "—",
+                sp.get("label", "—"),
                 sp["center_x"]   if sp["center_x"]   is not None else "—",
                 sp["center_y"]   if sp["center_y"]   is not None else "—",
                 sp["radius_px"],
@@ -400,14 +404,14 @@ def build_excel(summary_rows: list, per_spot_rows_all: list, run_configs: list):
             ]
             for ci, v in enumerate(vals, 1):
                 c = _set_cell(ws2, r2, ci, v)
-                if ci == 10:  # Final Status
+                if ci == 11:  # Final Status
                     if v == "Accepted":
                         c.fill = green_fill; c.font = Font(color="276221", bold=True)
                     else:
                         c.fill = red_fill;   c.font = Font(color="9C0006", bold=True)
             r2 += 1
 
-    col_widths_s2 = [6, 12, 14, 14, 12, 14, 17, 13, 15, 14, 30]
+    col_widths_s2 = [6, 12, 12, 14, 14, 12, 14, 17, 13, 15, 14, 30]
     for i, w in enumerate(col_widths_s2, 1):
         ws2.column_dimensions[_col(i)].width = w
     ws2.freeze_panes = "A2"
