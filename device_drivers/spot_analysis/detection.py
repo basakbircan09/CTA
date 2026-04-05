@@ -10,6 +10,7 @@ from .config import (
     DEFAULT_OPEN_KERNEL, DEFAULT_CLOSE_KERNEL,
     DEFAULT_MIN_SPOT_AREA, DEFAULT_MAX_SPOT_AREA,
     DEFAULT_MIN_CIRCULARITY, DEFAULT_MIN_SOLIDITY,
+    DEFAULT_MM_PER_PIXEL, DEFAULT_MIN_SPOT_DIAMETER_MM,
 )
 
 
@@ -137,6 +138,25 @@ def detect_spots(image: np.ndarray, debug: dict = None):
             })
             continue
 
+        # ---- Physical size filter (SFC opening criterion) ----
+        # Use minEnclosingCircle for a stable radius estimate independent of
+        # contour irregularities.
+        (_, radius_px) = cv2.minEnclosingCircle(c)
+        radius_mm   = float(radius_px) * DEFAULT_MM_PER_PIXEL
+        diameter_mm = 2.0 * radius_mm
+        if diameter_mm < DEFAULT_MIN_SPOT_DIAMETER_MM:
+            rejected.append({
+                "contour":    c,
+                "reason":     "too_small_physical",
+                "area":       area,
+                "circularity": circ,
+                "solidity":   solidity,
+                "radius_px":  float(radius_px),
+                "radius_mm":  radius_mm,
+                "diameter_mm": diameter_mm,
+            })
+            continue
+
         M = cv2.moments(c)
         if M["m00"] == 0:
             rejected.append({
@@ -152,11 +172,14 @@ def detect_spots(image: np.ndarray, debug: dict = None):
         cy = int(M["m01"] / M["m00"])
 
         spots.append({
-            "contour": c,
-            "center": (cx, cy),
-            "area": area,
+            "contour":    c,
+            "center":     (cx, cy),
+            "area":       area,
             "circularity": circ,
-            "solidity": solidity,
+            "solidity":   solidity,
+            "radius_px":  float(radius_px),
+            "radius_mm":  radius_mm,
+            "diameter_mm": diameter_mm,
         })
 
     return spots, rejected, pdbg
