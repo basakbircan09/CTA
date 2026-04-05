@@ -7,9 +7,10 @@ DEFAULT_MIN_CIRCULARITY = 0.45
 DEFAULT_MIN_SOLIDITY = 0.65
 
 # Physical size filter (SFC opening criterion)
-# Spots whose diameter (from minEnclosingCircle) is below this threshold are
-# rejected before defect inspection.
-DEFAULT_MM_PER_PIXEL = 0.094          # mm per pixel at 20 cm camera distance
+# mm_per_pixel is computed dynamically as plate_width_mm / crop_width_px.
+# Spots whose diameter (from minEnclosingCircle) is below min_spot_diameter_mm
+# are rejected before defect inspection.
+DEFAULT_PLATE_WIDTH_MM = 50.0         # physical width of the sample plate (mm)
 DEFAULT_MIN_SPOT_DIAMETER_MM = 1.5    # minimum acceptable spot diameter (mm)
 
 # Preprocessing
@@ -26,6 +27,7 @@ DEFAULT_OPEN_KERNEL = 2
 DEFAULT_CLOSE_KERNEL = 3
 
 # Defect inspection
+DEFAULT_ERODE_PX = 2
 DEFAULT_MAD_K = 4.5
 DEFAULT_MAX_OUTLIER_FRAC = 0.16
 
