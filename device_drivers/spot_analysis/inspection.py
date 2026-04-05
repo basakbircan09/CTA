@@ -5,7 +5,7 @@ import numpy as np
 from typing import Dict, Any, Tuple
 
 from .config import (
-    DEFAULT_ERODE_PX,
+    DEFAULT_MM_PER_PIXEL,
     DEFAULT_MAD_K,
     DEFAULT_MAX_OUTLIER_FRAC,
     DEFAULT_DARK_Q,
@@ -16,38 +16,13 @@ from .config import (
 
 
 # ---------------------------------------------------------------------------
-# Internal helpers
-# ---------------------------------------------------------------------------
-
-def _spot_mask(shape_hw: tuple, contour: np.ndarray) -> np.ndarray:
-    """Draw a filled contour mask onto a blank image of shape (H, W)."""
-    m = np.zeros(shape_hw, dtype=np.uint8)
-    cv2.drawContours(m, [contour], -1, 255, thickness=-1)
-    return m
-
-
-def _erode_mask(mask: np.ndarray, erode_px: int) -> np.ndarray:
-    """Erode a binary mask by erode_px pixels using an elliptical kernel.
-
-    Shrinking the mask before extracting pixel values prevents border
-    artefacts (e.g. partial pixels at the spot edge) from being mistaken
-    for defects.
-    """
-    if erode_px <= 0:
-        return mask
-    k = 2 * erode_px + 1
-    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k))
-    return cv2.erode(mask, kernel, iterations=1)
-
-
-# ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 
 def inspect_spot_defects(
     gray_norm: np.ndarray,
     spot: Dict[str, Any],
-    erode_px: int = DEFAULT_ERODE_PX,
+    mm_per_pixel: float = DEFAULT_MM_PER_PIXEL,
     mad_k: float = DEFAULT_MAD_K,
     max_outlier_frac: float = DEFAULT_MAX_OUTLIER_FRAC,
     dark_q: float = DEFAULT_DARK_Q,
@@ -59,20 +34,21 @@ def inspect_spot_defects(
 
     Strategy
     --------
-    1. Draw the spot contour mask and erode inward by ``erode_px`` pixels
-       so edge artefacts are ignored.
+    1. Draw a fixed circular inspection region of radius 0.75 mm converted to
+       pixels (inspect_radius_px = 0.75 / mm_per_pixel), centred on the spot
+       centroid.  This physical radius corresponds to the SFC opening geometry
+       and is constant regardless of actual spot size.
     2. Compute MAD-based outlier fraction (stored as informational
        ``nonuniform_flag`` only — not used for rejection).
     3. Build binary maps for dark pixels (≤ dark_q percentile) and bright
-       pixels (≥ bright_q percentile) inside the eroded mask.
+       pixels (≥ bright_q percentile) inside the inspection circle.
     4. Clean each binary map with a 3×3 MORPH_OPEN to remove single-pixel
        noise.
-    5. Compute the spot's inner boundary (morphological gradient of the
-       eroded mask).
-    6. For each connected component in the dark/bright maps, reject it if:
-       - Its area ≥ min_area threshold (avoids reacting to noise), AND
-       - It does NOT touch the inner boundary (components touching the edge
-         are artefacts, not real interior defects).
+    5. Compute the inspection circle's inner boundary (morphological gradient)
+       to identify edge artefacts.
+    6. For each connected component in the dark/bright maps, flag it if:
+       - Its area ≥ min_area threshold, AND
+       - It does NOT touch the inner boundary.
     7. Flag the spot as ``is_bad`` if any valid dark or bright component
        is found.
 
@@ -80,8 +56,11 @@ def inspect_spot_defects(
     -------
     (is_bad, metrics_dict)
     """
-    spot_mask = _spot_mask(gray_norm.shape, spot["contour"])
-    inner = _erode_mask(spot_mask, erode_px)
+    cx, cy = spot["center"]
+    inspect_radius_px = int(round(0.75 / mm_per_pixel))
+
+    inner = np.zeros(gray_norm.shape, dtype=np.uint8)
+    cv2.circle(inner, (cx, cy), inspect_radius_px, 255, thickness=-1)
 
     vals = gray_norm[inner == 255]
 
@@ -103,7 +82,7 @@ def inspect_spot_defects(
     t_dark   = float(np.percentile(vals, dark_q))
     t_bright = float(np.percentile(vals, bright_q))
 
-    # ---- Binary dark / bright maps inside eroded mask ----
+    # ---- Binary dark / bright maps inside inspection circle ----
     dark_bin   = np.zeros_like(gray_norm, dtype=np.uint8)
     bright_bin = np.zeros_like(gray_norm, dtype=np.uint8)
     dark_bin[  (inner == 255) & (gray_norm <= t_dark)]   = 255
@@ -144,15 +123,16 @@ def inspect_spot_defects(
         reasons.append("bright_defect_component")
 
     metrics = {
-        "median":            med,
-        "mad":               mad,
-        "outlier_frac":      outlier_frac,
-        "nonuniform_flag":   nonuniform_flag,
-        "t_dark":            t_dark,
-        "t_bright":          t_bright,
+        "median":             med,
+        "mad":                mad,
+        "outlier_frac":       outlier_frac,
+        "nonuniform_flag":    nonuniform_flag,
+        "t_dark":             t_dark,
+        "t_bright":           t_bright,
         "min_defect_area_px": int(min_area),
-        "n":                 int(vals.size),
-        "reason":            reasons,
+        "inspect_radius_px":  inspect_radius_px,
+        "n":                  int(vals.size),
+        "reason":             reasons,
     }
 
     return len(reasons) > 0, metrics
