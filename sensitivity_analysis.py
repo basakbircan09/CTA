@@ -58,8 +58,9 @@ DEFAULTS = {
     "DEFAULT_THRESH_C":         2,
     "DEFAULT_OPEN_KERNEL":      2,
     "DEFAULT_CLOSE_KERNEL":     3,
+    # Physical calibration
+    "DEFAULT_MM_PER_PIXEL":     0.094,
     # Defect inspection
-    "DEFAULT_ERODE_PX":         2,
     "DEFAULT_MAD_K":            4.5,
     "DEFAULT_MAX_OUTLIER_FRAC": 0.16,
     "DEFAULT_DARK_Q":           10,
@@ -75,11 +76,12 @@ DETECTION_VARS = {
     "DEFAULT_BG_BLUR_K", "DEFAULT_CLAHE_CLIP", "DEFAULT_CLAHE_TILE",
     "DEFAULT_THRESH_BLOCKSIZE", "DEFAULT_THRESH_C",
     "DEFAULT_OPEN_KERNEL", "DEFAULT_CLOSE_KERNEL",
+    "DEFAULT_MM_PER_PIXEL",
 }
 
 # Variables passed directly as kwargs to inspect_spot_defects()
 INSPECTION_KWARGS = {
-    "DEFAULT_ERODE_PX":         "erode_px",
+    "DEFAULT_MM_PER_PIXEL":     "mm_per_pixel",
     "DEFAULT_MAD_K":            "mad_k",
     "DEFAULT_MAX_OUTLIER_FRAC": "max_outlier_frac",
     "DEFAULT_DARK_Q":           "dark_q",
@@ -110,8 +112,8 @@ RUNS = [
     ("C2", "Defect Inspection",     "DEFAULT_DEFECT_AREA_FRAC",  0.10),
     ("C3", "Defect Inspection",     "DEFAULT_DARK_Q",            5),
     ("C4", "Defect Inspection",     "DEFAULT_DARK_Q",            20),
-    ("C5", "Defect Inspection",     "DEFAULT_ERODE_PX",          0),
-    ("C6", "Defect Inspection",     "DEFAULT_ERODE_PX",          5),
+    ("C5", "Defect Inspection",     "DEFAULT_MM_PER_PIXEL",      0.047),
+    ("C6", "Defect Inspection",     "DEFAULT_MM_PER_PIXEL",      0.188),
 ]
 
 
