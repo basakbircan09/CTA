@@ -82,15 +82,13 @@ DETECTION_VARS = {
 # Inspection kwargs: inspect_spot_defects has these as default ARGUMENTS,
 # so we MUST pass them explicitly — patching the module has no effect.
 INSPECTION_KWARG_MAP = {
-    "DEFAULT_PLATE_WIDTH_MM":       "plate_width_mm",
-    "DEFAULT_MIN_SPOT_DIAMETER_MM": "min_spot_diameter_mm",
-    "DEFAULT_ERODE_PX":             "erode_px",
-    "DEFAULT_MAD_K":                "mad_k",
-    "DEFAULT_MAX_OUTLIER_FRAC":     "max_outlier_frac",
-    "DEFAULT_DARK_Q":               "dark_q",
-    "DEFAULT_BRIGHT_Q":             "bright_q",
-    "DEFAULT_DEFECT_AREA_FRAC":     "defect_area_frac",
-    "DEFAULT_MIN_DEFECT_AREA_PX":   "min_defect_area_px",
+    "DEFAULT_ERODE_PX":           "erode_px",
+    "DEFAULT_MAD_K":              "mad_k",
+    "DEFAULT_MAX_OUTLIER_FRAC":   "max_outlier_frac",
+    "DEFAULT_DARK_Q":             "dark_q",
+    "DEFAULT_BRIGHT_Q":           "bright_q",
+    "DEFAULT_DEFECT_AREA_FRAC":   "defect_area_frac",
+    "DEFAULT_MIN_DEFECT_AREA_PX": "min_defect_area_px",
 }
 
 # ---------------------------------------------------------------------------
