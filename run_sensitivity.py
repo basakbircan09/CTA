@@ -242,7 +242,7 @@ def run_once(image: np.ndarray, run: dict) -> dict:
             "rejection_reason": "too_small_physical",
         })
 
-    # 7. Build annotated image
+    # 7. Build annotated images
     overlay = image.copy()
     for s in accepted_spots:
         cx, cy = s["center"]
@@ -261,6 +261,15 @@ def run_once(image: np.ndarray, run: dict) -> dict:
         if cnt is not None:
             cv2.drawContours(overlay, [cnt], -1, (0, 200, 220), 1)
 
+    # All-detected image: every spot that passed geometric + size filters in blue
+    all_detected = image.copy()
+    for s in spots:
+        cx, cy = s["center"]
+        r = int(s.get("radius_px", 10))
+        cv2.circle(all_detected, (cx, cy), r, (255, 100, 0), 2)
+        cv2.putText(all_detected, s.get("label", ""), (cx + r + 2, cy - 4),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 100, 0), 1)
+
     return {
         "total_contours":  total_contours,
         "detected_geom":   passed_geom,
@@ -268,6 +277,7 @@ def run_once(image: np.ndarray, run: dict) -> dict:
         "accepted":        len(accepted_spots),
         "rejected":        len(defect_rejected) + len(size_rejected),
         "overlay":         overlay,
+        "all_detected":    all_detected,
         "per_spot_rows":   per_spot_rows,
     }
 
@@ -285,6 +295,17 @@ def _img_name(run: dict) -> str:
     short = str(var).replace("DEFAULT_", "")
     val_s = str(val).replace(".", "_")
     return f"{rid}_{short}_{val_s}_results.png"
+
+
+def _img_name_all(run: dict) -> str:
+    rid = run["id"]
+    var = run["variable"]
+    val = run["test_value"]
+    if rid == "0":
+        return "0_all_detected.png"
+    short = str(var).replace("DEFAULT_", "")
+    val_s = str(val).replace(".", "_")
+    return f"{rid}_{short}_{val_s}_all_detected.png"
 
 
 # ---------------------------------------------------------------------------
@@ -477,9 +498,11 @@ def main():
 
         result = run_once(image, run)
 
-        # Save annotated image
+        # Save annotated images
         img_path = OUTPUT_DIR / _img_name(run)
         cv2.imwrite(str(img_path), result["overlay"])
+        all_path = OUTPUT_DIR / _img_name_all(run)
+        cv2.imwrite(str(all_path), result["all_detected"])
 
         if rid == "0":
             baseline = result
