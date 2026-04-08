@@ -250,13 +250,13 @@ class ManualSpotDialog(QDialog):
         self._spots.append({"label": label, "x": x, "y": y})
 
         r    = 10
-        pen  = QPen(QColor(0, 60, 180), 2)
-        fill = QBrush(QColor(0, 60, 180, 90))
+        pen  = QPen(QColor(255, 255, 255), 2)
+        fill = QBrush(QColor(255, 255, 255, 90))
         circle = self._scene.addEllipse(x - r, y - r, 2 * r, 2 * r, pen, fill)
 
         txt = self._scene.addText(label)
-        txt.setDefaultTextColor(QColor(30, 100, 255))
-        fnt = QFont("Arial", 11, QFont.Weight.Bold)
+        txt.setDefaultTextColor(QColor(255, 255, 255))
+        fnt = QFont("Arial", 14, QFont.Weight.Bold)
         txt.setFont(fnt)
         txt.setPos(x + r + 2, y - 14)
 
@@ -279,7 +279,7 @@ class ManualSpotDialog(QDialog):
 
         txt = self._scene.addText("REF")
         txt.setDefaultTextColor(QColor(255, 140, 0))
-        fnt = QFont("Arial", 11, QFont.Weight.Bold)
+        fnt = QFont("Arial", 14, QFont.Weight.Bold)
         txt.setFont(fnt)
         txt.setPos(x + r + 2, y - 14)
 
