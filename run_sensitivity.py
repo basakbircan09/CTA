@@ -261,9 +261,15 @@ def run_once(image: np.ndarray, run: dict) -> dict:
         if cnt is not None:
             cv2.drawContours(overlay, [cnt], -1, (0, 200, 220), 1)
 
-    # All-detected image: every spot that passed geometric + size filters in blue
+    # All-detected image: accepted spots in white, defect-rejected in blue
     all_detected = image.copy()
-    for s in spots:
+    for s in accepted_spots:
+        cx, cy = s["center"]
+        r = int(s.get("radius_px", 10))
+        cv2.circle(all_detected, (cx, cy), r, (255, 255, 255), 2)
+        cv2.putText(all_detected, s.get("label", ""), (cx + r + 2, cy - 4),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+    for s in defect_rejected:
         cx, cy = s["center"]
         r = int(s.get("radius_px", 10))
         cv2.circle(all_detected, (cx, cy), r, (255, 100, 0), 2)
