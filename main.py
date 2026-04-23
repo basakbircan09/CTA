@@ -699,6 +699,7 @@ class SimpleStageApp(QMainWindow):
         # Left panel inside a scroll area so it can be scrolled when content
         # exceeds the window height
         settings_widget = QWidget()
+        settings_widget.setMaximumWidth(260)
         settings_panel  = QVBoxLayout(settings_widget)
         settings_panel.setSpacing(10)
         settings_panel.setContentsMargins(4, 4, 4, 4)
@@ -707,12 +708,14 @@ class SimpleStageApp(QMainWindow):
         left_scroll.setWidget(settings_widget)
         left_scroll.setWidgetResizable(True)
         left_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        left_scroll.setMaximumWidth(310)
+        left_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        left_scroll.setFixedWidth(280)
         middle_layout.addWidget(left_scroll)
 
         # Camera settings group
         cam_group  = QGroupBox("Camera Settings")
         cam_group.setStyleSheet("QGroupBox { font-weight: bold; }")
+        cam_group.setMaximumWidth(260)
         cam_layout = QGridLayout(cam_group)
         cam_layout.setSpacing(8)
 
@@ -770,6 +773,7 @@ class SimpleStageApp(QMainWindow):
         # Stage control group
         stage_group  = QGroupBox("Stage Control")
         stage_group.setStyleSheet("QGroupBox { font-weight: bold; }")
+        stage_group.setMaximumWidth(260)
         stage_layout = QVBoxLayout(stage_group)
         stage_layout.setSpacing(10)
 
@@ -854,6 +858,7 @@ class SimpleStageApp(QMainWindow):
         # Move to Spot group
         move_spot_group  = QGroupBox("Spot Navigation")
         move_spot_group.setStyleSheet("QGroupBox { font-weight: bold; }")
+        move_spot_group.setMaximumWidth(260)
         move_spot_layout = QGridLayout(move_spot_group)
         move_spot_layout.setSpacing(6)
 
@@ -906,6 +911,7 @@ class SimpleStageApp(QMainWindow):
         )
         sfc_group  = QGroupBox("SFC Calibration (fixed)")
         sfc_group.setStyleSheet("QGroupBox { font-weight: bold; }")
+        sfc_group.setMaximumWidth(260)
         sfc_layout = QGridLayout(sfc_group)
         sfc_layout.setSpacing(4)
 
@@ -931,6 +937,7 @@ class SimpleStageApp(QMainWindow):
         # Alignment Options group
         align_opt_group  = QGroupBox("Alignment Options")
         align_opt_group.setStyleSheet("QGroupBox { font-weight: bold; }")
+        align_opt_group.setMaximumWidth(260)
         align_opt_layout = QGridLayout(align_opt_group)
         align_opt_layout.setSpacing(6)
 
