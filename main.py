@@ -704,7 +704,7 @@ class SimpleStageApp(QMainWindow):
             QPushButton:pressed { background-color: #3a3a3a; }
         """
 
-        self.btn_connect_init      = QPushButton("Connect & Initialize")
+        self.btn_connect_init      = QPushButton("Connect && Initialize")
         self.btn_cam_start         = QPushButton("Start Camera")
         self.btn_capture           = QPushButton("Capture Image")
         self.btn_plate             = QPushButton("Detect Plate")
@@ -1308,32 +1308,9 @@ class SimpleStageApp(QMainWindow):
         self.set_step(1)
         QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
-            self.set_status("CONNECTING...", "connecting")
-            self.log("Stage: connecting to all controllers...", "info")
-            self.connection_service.connect().result(timeout=30)
-            self.set_status("CONNECTED", "connecting")
-            self.log("Stage: all controllers connected.", "info")
-        except Exception as exc:
-            self.set_status("ERROR", "error")
-            self.log(f"Stage connect error: {exc}", "error")
-            QMessageBox.critical(self, "Connection error", str(exc))
-            QApplication.restoreOverrideCursor()
-            return
-        try:
-            self.set_status("INITIALIZING...", "connecting")
-            self.log("Stage: referencing all axes...", "info")
-            self.connection_service.initialize().result(timeout=120)
-
-            self.set_status("PARKING...", "connecting")
-            self.log("Stage: moving to park position...", "info")
-            self.motion_service.move_to_position_safe_z(self.park_position).result(timeout=60)
-
-            self.set_status("READY", "ready")
-            self.log(f"Stage ready. Parked at {self.park_position}.", "info")
-        except Exception as exc:
-            self.set_status("ERROR", "error")
-            self.log(f"Initialize error: {exc}", "error")
-            QMessageBox.critical(self, "Initialize error", str(exc))
+            self.on_connect_clicked()
+            if self.connection_service.state.connection.name == "CONNECTED":
+                self.on_initialize_clicked()
         finally:
             QApplication.restoreOverrideCursor()
 
