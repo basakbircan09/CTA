@@ -678,7 +678,7 @@ class SimpleStageApp(QMainWindow):
 
         # ---- Top toolbar ----
         toolbar_layout = QHBoxLayout()
-        toolbar_layout.setSpacing(8)
+        toolbar_layout.setSpacing(6)
         toolbar_layout.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
 
         self.status_label = QLabel("DISCONNECTED")
@@ -697,11 +697,8 @@ class SimpleStageApp(QMainWindow):
 
         btn_style = """
             QPushButton {
-                padding: 6px 16px;
                 font-weight: bold;
                 border-radius: 4px;
-                min-width: 80px;
-                min-height: 36px;
             }
             QPushButton:hover   { background-color: #4a4a4a; }
             QPushButton:pressed { background-color: #3a3a3a; }
@@ -717,15 +714,56 @@ class SimpleStageApp(QMainWindow):
         self.btn_toolbar_move_next = QPushButton("Move Next")
         self.btn_toolbar_contact   = QPushButton("Make Contact")
 
-        for btn in [self.btn_connect_init, self.btn_cam_start,
-                    self.btn_capture, self.btn_plate, self.btn_we,
-                    self.btn_manual_spot, self.btn_toolbar_move_spot,
-                    self.btn_toolbar_move_next, self.btn_toolbar_contact]:
+        for btn, w in [
+            (self.btn_connect_init,      160),
+            (self.btn_cam_start,         110),
+            (self.btn_capture,           110),
+            (self.btn_plate,             105),
+            (self.btn_we,                105),
+            (self.btn_manual_spot,       110),
+            (self.btn_toolbar_move_spot, 105),
+            (self.btn_toolbar_move_next,  95),
+            (self.btn_toolbar_contact,   110),
+        ]:
             btn.setStyleSheet(btn_style)
+            btn.setFixedSize(w, 36)
             toolbar_layout.addWidget(btn)
 
-        toolbar_layout.addStretch()
+        toolbar_layout.addStretch(1)
         outer_layout.addLayout(toolbar_layout)
+
+        # ---- Step progress indicator ----
+        _pill_qss = """
+            QLabel[step_state="inactive"] {
+                background-color: #E5E7EB; color: #6B7280;
+                padding: 4px 12px; border-radius: 10px; font-size: 11px;
+            }
+            QLabel[step_state="active"] {
+                background-color: #2563EB; color: white;
+                padding: 4px 12px; border-radius: 10px; font-size: 11px;
+            }
+            QLabel[step_state="done"] {
+                background-color: #16A34A; color: white;
+                padding: 4px 12px; border-radius: 10px; font-size: 11px;
+            }
+        """
+        step_bar_layout = QHBoxLayout()
+        step_bar_layout.setSpacing(4)
+        step_bar_layout.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        self._step_pills: list[QLabel] = []
+        for idx, name in enumerate(
+            ["Connect", "Camera", "Capture", "Detect Plate",
+             "Detect Spots", "Move", "Contact"], start=1
+        ):
+            pill = QLabel(f"{idx}. {name}")
+            pill.setStyleSheet(_pill_qss)
+            pill.setProperty("step_state", "inactive")
+            pill.style().unpolish(pill)
+            pill.style().polish(pill)
+            self._step_pills.append(pill)
+            step_bar_layout.addWidget(pill)
+        step_bar_layout.addStretch(1)
+        outer_layout.addLayout(step_bar_layout)
 
         # ---- Middle: settings + image ----
         middle_layout = QHBoxLayout()
@@ -1114,6 +1152,13 @@ class SimpleStageApp(QMainWindow):
     # Helpers
     # ================================================================
 
+    def set_step(self, n: int) -> None:
+        for i, pill in enumerate(self._step_pills, start=1):
+            state = "done" if i < n else ("active" if i == n else "inactive")
+            pill.setProperty("step_state", state)
+            pill.style().unpolish(pill)
+            pill.style().polish(pill)
+
     def _toggle_wb_section(self) -> None:
         visible = self.wb_section.isVisible()
         self.wb_section.setVisible(not visible)
@@ -1204,6 +1249,7 @@ class SimpleStageApp(QMainWindow):
             QMessageBox.critical(self, "Initialize error", str(exc))
 
     def on_connect_and_initialize_clicked(self) -> None:
+        self.set_step(1)
         QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
             self.set_status("CONNECTING...", "connecting")
@@ -1236,6 +1282,7 @@ class SimpleStageApp(QMainWindow):
             QApplication.restoreOverrideCursor()
 
     def on_cam_start_clicked(self) -> None:
+        self.set_step(2)
         if not self.live_running:
             try:
                 if not self.camera.is_connected:
@@ -1253,6 +1300,7 @@ class SimpleStageApp(QMainWindow):
             self.log("Camera live view stopped.", "info")
 
     def on_capture_clicked(self) -> None:
+        self.set_step(3)
         camera_available = self.camera.is_connected
         if not camera_available:
             try:
@@ -1305,6 +1353,7 @@ class SimpleStageApp(QMainWindow):
         self.log(f"Loaded image: {path}", "info")
 
     def on_plate_clicked(self) -> None:
+        self.set_step(4)
         image_path = self.last_image_path
         if not image_path:
             image_path = self._pick_image_file("Select image for plate detection")
@@ -1346,6 +1395,7 @@ class SimpleStageApp(QMainWindow):
             QMessageBox.critical(self, "Plate detection error", str(exc))
 
     def on_we_clicked(self) -> None:
+        self.set_step(5)
         image_path = self.last_plate_path
 
         if not image_path:
@@ -1669,6 +1719,7 @@ class SimpleStageApp(QMainWindow):
     # ------------------------------------------------------------------
 
     def on_move_to_spot_clicked(self) -> None:
+        self.set_step(6)
         if not self._check_alignment_ready():
             return
 
@@ -1864,6 +1915,7 @@ class SimpleStageApp(QMainWindow):
     # ------------------------------------------------------------------
 
     def on_contact_clicked(self) -> None:
+        self.set_step(7)
         # If already running, abort
         if self._contact_worker and self._contact_worker.isRunning():
             self._contact_worker.abort()
