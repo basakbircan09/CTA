@@ -781,7 +781,7 @@ class SimpleStageApp(QMainWindow):
         left_scroll.setWidget(settings_widget)
         left_scroll.setWidgetResizable(True)
         left_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        left_scroll.setMaximumWidth(310)
+        left_scroll.setFixedWidth(300)
         middle_layout.addWidget(left_scroll)
 
         # Camera settings group
@@ -867,6 +867,7 @@ class SimpleStageApp(QMainWindow):
         self.wb_section.setVisible(False)
         cam_outer.addWidget(self.wb_section)
 
+        cam_group.setMaximumWidth(280)
         settings_panel.addWidget(cam_group)
 
         # Stage control group
@@ -931,26 +932,43 @@ class SimpleStageApp(QMainWindow):
         separator.setStyleSheet("background-color: #3a3a3a; min-height: 1px; max-height: 1px;")
         stage_layout.addWidget(separator)
 
-        goto_layout = QHBoxLayout()
-        goto_layout.setSpacing(8)
-        goto_layout.addWidget(QLabel("Go to:"))
+        goto_vbox = QVBoxLayout()
+        goto_vbox.setSpacing(4)
+        goto_vbox.addWidget(QLabel("Go to:"))
+
         self.spin_goto_x = QDoubleSpinBox()
         self.spin_goto_y = QDoubleSpinBox()
         self.spin_goto_z = QDoubleSpinBox()
-        for axis_lbl, spin in [("X:", self.spin_goto_x), ("Y:", self.spin_goto_y), ("Z:", self.spin_goto_z)]:
+        for spin in [self.spin_goto_x, self.spin_goto_y, self.spin_goto_z]:
             spin.setRange(0.0, 300.0)
             spin.setValue(200.0)
             spin.setDecimals(2)
-            spin.setMaximumWidth(80)
-            goto_layout.addWidget(QLabel(axis_lbl))
-            goto_layout.addWidget(spin)
-        btn_goto = QPushButton("Go")
-        btn_goto.setStyleSheet("font-weight: bold; min-width: 60px;")
-        btn_goto.clicked.connect(self.on_goto_position)
-        goto_layout.addWidget(btn_goto)
-        goto_layout.addStretch()
-        stage_layout.addLayout(goto_layout)
+            spin.setFixedWidth(75)
 
+        goto_row1 = QHBoxLayout()
+        goto_row1.setSpacing(4)
+        goto_row1.addWidget(QLabel("X:"))
+        goto_row1.addWidget(self.spin_goto_x)
+        goto_row1.addWidget(QLabel("Y:"))
+        goto_row1.addWidget(self.spin_goto_y)
+        goto_row1.addStretch()
+        goto_vbox.addLayout(goto_row1)
+
+        goto_row2 = QHBoxLayout()
+        goto_row2.setSpacing(4)
+        goto_row2.addWidget(QLabel("Z:"))
+        goto_row2.addWidget(self.spin_goto_z)
+        btn_goto = QPushButton("Go")
+        btn_goto.setStyleSheet("font-weight: bold;")
+        btn_goto.setFixedWidth(55)
+        btn_goto.clicked.connect(self.on_goto_position)
+        goto_row2.addWidget(btn_goto)
+        goto_row2.addStretch()
+        goto_vbox.addLayout(goto_row2)
+
+        stage_layout.addLayout(goto_vbox)
+
+        stage_group.setMaximumWidth(280)
         settings_panel.addWidget(stage_group)
 
         # Move to Spot group
@@ -961,6 +979,7 @@ class SimpleStageApp(QMainWindow):
 
         move_spot_layout.addWidget(QLabel("Spot:"), 0, 0)
         self.combo_move_spot = QComboBox()
+        self.combo_move_spot.setMaximumWidth(260)
         self.combo_move_spot.setToolTip(
             "Populated automatically after Manual Spot Detect.\n"
             "Select a spot then press Go."
@@ -969,12 +988,14 @@ class SimpleStageApp(QMainWindow):
 
         self.btn_move_spot = QPushButton("Go")
         self.btn_move_spot.setStyleSheet("font-weight: bold;")
+        self.btn_move_spot.setMaximumWidth(260)
         self.btn_move_spot.setToolTip("Compute alignment for the selected spot and move to it.")
         self.btn_move_spot.clicked.connect(self.on_move_to_spot_clicked)
         move_spot_layout.addWidget(self.btn_move_spot, 0, 2)
 
-        self.btn_move_next = QPushButton("Move Next Spot")
+        self.btn_move_next = QPushButton("Next Spot")
         self.btn_move_next.setStyleSheet("font-weight: bold;")
+        self.btn_move_next.setMaximumWidth(260)
         self.btn_move_next.setToolTip(
             "Move to the next spot in sequence (S1 → S2 → S3 …).\n"
             "Each click advances one spot so you can supervise every step."
@@ -984,12 +1005,14 @@ class SimpleStageApp(QMainWindow):
 
         self.lbl_next_spot = QLabel("Next: —")
         self.lbl_next_spot.setStyleSheet("color: #888; font-size: 11px;")
+        self.lbl_next_spot.setMaximumWidth(260)
         move_spot_layout.addWidget(self.lbl_next_spot, 2, 0, 1, 3)
 
         self.btn_contact = QPushButton("Contact")
         self.btn_contact.setStyleSheet(
             "font-weight: bold; background-color: #5a2d2d; color: white;"
         )
+        self.btn_contact.setMaximumWidth(260)
         self.btn_contact.setToolTip(
             "Move stage to approach Z=117 mm, then step down 1 mm at a time.\n"
             "Stops automatically when force sensor exceeds 2 N or Z reaches 110 mm."
@@ -997,6 +1020,7 @@ class SimpleStageApp(QMainWindow):
         self.btn_contact.clicked.connect(self.on_contact_clicked)
         move_spot_layout.addWidget(self.btn_contact, 3, 0, 1, 3)
 
+        move_spot_group.setMaximumWidth(280)
         settings_panel.addWidget(move_spot_group)
 
         # SFC Calibration group — values are fixed lab calibration constants
@@ -1006,7 +1030,7 @@ class SimpleStageApp(QMainWindow):
             REF_STAGE_X as _REF_STAGE_X, REF_STAGE_Y as _REF_STAGE_Y,
             PIXEL_SCALE_MM as _PIXEL_SCALE_MM,
         )
-        sfc_group  = QGroupBox("SFC Calibration (fixed)")
+        self.sfc_group = sfc_group = QGroupBox("SFC Calibration (fixed)")
         sfc_group.setStyleSheet("QGroupBox { font-weight: bold; }")
         sfc_layout = QGridLayout(sfc_group)
         sfc_layout.setSpacing(4)
@@ -1028,10 +1052,23 @@ class SimpleStageApp(QMainWindow):
         _cal_row("Ref stage Y (mm):",  f"{_REF_STAGE_Y:.1f}",    5)
         _cal_row("Pixel scale:",       f"{_PIXEL_SCALE_MM} mm/px", 6)
 
+        sfc_group.setMaximumWidth(280)
+        sfc_group.setVisible(False)
+
+        _toggle_style = (
+            "QPushButton { text-align: left; font-weight: bold; padding: 2px 4px; }"
+            "QPushButton:hover { color: #aaaaaa; }"
+        )
+        self.btn_sfc_toggle = QPushButton("SFC Calibration ▼")
+        self.btn_sfc_toggle.setFlat(True)
+        self.btn_sfc_toggle.setStyleSheet(_toggle_style)
+        self.btn_sfc_toggle.setMaximumWidth(280)
+        self.btn_sfc_toggle.clicked.connect(self._toggle_sfc_section)
+        settings_panel.addWidget(self.btn_sfc_toggle)
         settings_panel.addWidget(sfc_group)
 
         # Alignment Options group
-        align_opt_group  = QGroupBox("Alignment Options")
+        self.align_opt_group = align_opt_group = QGroupBox("Alignment Options")
         align_opt_group.setStyleSheet("QGroupBox { font-weight: bold; }")
         align_opt_layout = QGridLayout(align_opt_group)
         align_opt_layout.setSpacing(6)
@@ -1068,6 +1105,15 @@ class SimpleStageApp(QMainWindow):
         )
         align_opt_layout.addWidget(self.spin_max_move, 2, 1)
 
+        align_opt_group.setMaximumWidth(280)
+        align_opt_group.setVisible(False)
+
+        self.btn_align_toggle = QPushButton("Alignment Options ▼")
+        self.btn_align_toggle.setFlat(True)
+        self.btn_align_toggle.setStyleSheet(_toggle_style)
+        self.btn_align_toggle.setMaximumWidth(280)
+        self.btn_align_toggle.clicked.connect(self._toggle_align_section)
+        settings_panel.addWidget(self.btn_align_toggle)
         settings_panel.addWidget(align_opt_group)
         settings_panel.addStretch()
 
@@ -1163,6 +1209,16 @@ class SimpleStageApp(QMainWindow):
         visible = self.wb_section.isVisible()
         self.wb_section.setVisible(not visible)
         self.btn_wb_toggle.setText("Advanced ▲" if not visible else "Advanced ▼")
+
+    def _toggle_sfc_section(self) -> None:
+        visible = self.sfc_group.isVisible()
+        self.sfc_group.setVisible(not visible)
+        self.btn_sfc_toggle.setText("SFC Calibration ▲" if not visible else "SFC Calibration ▼")
+
+    def _toggle_align_section(self) -> None:
+        visible = self.align_opt_group.isVisible()
+        self.align_opt_group.setVisible(not visible)
+        self.btn_align_toggle.setText("Alignment Options ▲" if not visible else "Alignment Options ▼")
 
     def log(self, message: str, level: str = "info") -> None:
         prefix = {"info": "[INFO]", "warn": "[WARN]", "error": "[ERROR]"}.get(level, "[INFO]")
