@@ -696,27 +696,30 @@ class SimpleStageApp(QMainWindow):
 
         btn_style = """
             QPushButton {
-                padding: 8px 16px;
+                padding: 6px 16px;
                 font-weight: bold;
                 border-radius: 4px;
                 min-width: 80px;
+                min-height: 36px;
             }
             QPushButton:hover   { background-color: #4a4a4a; }
             QPushButton:pressed { background-color: #3a3a3a; }
         """
 
-        self.btn_connect      = QPushButton("Connect")
-        self.btn_init         = QPushButton("Initialize")
-        self.btn_cam_start    = QPushButton("Camera")
-        self.btn_capture      = QPushButton("Capture")
-        self.btn_plate        = QPushButton("Plate Detect")
-        self.btn_we           = QPushButton("WE Detect")
-        self.btn_we_gpt       = QPushButton("WE GPT")
-        self.btn_manual_spot  = QPushButton("Manual Spot Detect")
+        self.btn_connect_init      = QPushButton("Connect & Initialize")
+        self.btn_cam_start         = QPushButton("Start Camera")
+        self.btn_capture           = QPushButton("Capture Image")
+        self.btn_plate             = QPushButton("Detect Plate")
+        self.btn_we                = QPushButton("Detect Spots")
+        self.btn_manual_spot       = QPushButton("Manual Select")
+        self.btn_toolbar_move_spot = QPushButton("Move to Spot")
+        self.btn_toolbar_move_next = QPushButton("Move Next")
+        self.btn_toolbar_contact   = QPushButton("Make Contact")
 
-        for btn in [self.btn_connect, self.btn_init, self.btn_cam_start,
+        for btn in [self.btn_connect_init, self.btn_cam_start,
                     self.btn_capture, self.btn_plate, self.btn_we,
-                    self.btn_we_gpt, self.btn_manual_spot]:
+                    self.btn_manual_spot, self.btn_toolbar_move_spot,
+                    self.btn_toolbar_move_next, self.btn_toolbar_contact]:
             btn.setStyleSheet(btn_style)
             toolbar_layout.addWidget(btn)
 
@@ -1082,14 +1085,15 @@ class SimpleStageApp(QMainWindow):
         outer_layout.addWidget(bottom_widget)
 
         # ---- Wire buttons ----
-        self.btn_connect.clicked.connect(self.on_connect_clicked)
-        self.btn_init.clicked.connect(self.on_initialize_clicked)
+        self.btn_connect_init.clicked.connect(self.on_connect_and_initialize_clicked)
         self.btn_cam_start.clicked.connect(self.on_cam_start_clicked)
         self.btn_capture.clicked.connect(self.on_capture_clicked)
         self.btn_plate.clicked.connect(self.on_plate_clicked)
         self.btn_we.clicked.connect(self.on_we_clicked)
-        self.btn_we_gpt.clicked.connect(self.on_we_gpt_clicked)
         self.btn_manual_spot.clicked.connect(self.on_manual_spot_clicked)
+        self.btn_toolbar_move_spot.clicked.connect(self.on_move_to_spot_clicked)
+        self.btn_toolbar_move_next.clicked.connect(self.on_move_next_spot_clicked)
+        self.btn_toolbar_contact.clicked.connect(self.on_contact_clicked)
 
     # ================================================================
     # Helpers
@@ -1179,6 +1183,38 @@ class SimpleStageApp(QMainWindow):
             self.log(f"Initialize error: {exc}", "error")
             QMessageBox.critical(self, "Initialize error", str(exc))
 
+    def on_connect_and_initialize_clicked(self) -> None:
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            self.set_status("CONNECTING...", "connecting")
+            self.log("Stage: connecting to all controllers...", "info")
+            self.connection_service.connect().result(timeout=30)
+            self.set_status("CONNECTED", "connecting")
+            self.log("Stage: all controllers connected.", "info")
+        except Exception as exc:
+            self.set_status("ERROR", "error")
+            self.log(f"Stage connect error: {exc}", "error")
+            QMessageBox.critical(self, "Connection error", str(exc))
+            QApplication.restoreOverrideCursor()
+            return
+        try:
+            self.set_status("INITIALIZING...", "connecting")
+            self.log("Stage: referencing all axes...", "info")
+            self.connection_service.initialize().result(timeout=120)
+
+            self.set_status("PARKING...", "connecting")
+            self.log("Stage: moving to park position...", "info")
+            self.motion_service.move_to_position_safe_z(self.park_position).result(timeout=60)
+
+            self.set_status("READY", "ready")
+            self.log(f"Stage ready. Parked at {self.park_position}.", "info")
+        except Exception as exc:
+            self.set_status("ERROR", "error")
+            self.log(f"Initialize error: {exc}", "error")
+            QMessageBox.critical(self, "Initialize error", str(exc))
+        finally:
+            QApplication.restoreOverrideCursor()
+
     def on_cam_start_clicked(self) -> None:
         if not self.live_running:
             try:
@@ -1186,14 +1222,14 @@ class SimpleStageApp(QMainWindow):
                     self.camera.connect()
                 self.live_timer.start(100)
                 self.live_running = True
-                self.btn_cam_start.setText("Camera Stop")
+                self.btn_cam_start.setText("Stop Camera")
                 self.log("Camera live view started.", "info")
             except Exception as exc:
                 self.log(f"Live start error: {exc}", "error")
         else:
             self.live_timer.stop()
             self.live_running = False
-            self.btn_cam_start.setText("Camera")
+            self.btn_cam_start.setText("Start Camera")
             self.log("Camera live view stopped.", "info")
 
     def on_capture_clicked(self) -> None:
@@ -1312,7 +1348,7 @@ class SimpleStageApp(QMainWindow):
         save_dir = str(PROJECT_ROOT / "artifacts" / "we_detection")
 
         self.btn_we.setEnabled(False)
-        self.btn_we.setText("WE Detect (running...)")
+        self.btn_we.setText("Detect Spots (running...)")
 
         self._we_worker = SpotAnalysisWorker(image_path, save_dir)
         self._we_worker.finished.connect(self._on_we_finished)
@@ -1321,7 +1357,7 @@ class SimpleStageApp(QMainWindow):
 
     def _on_we_finished(self, result: dict) -> None:
         self.btn_we.setEnabled(True)
-        self.btn_we.setText("WE Detect")
+        self.btn_we.setText("Detect Spots")
 
         overlay = result.get("overlay_image")
         if overlay is not None:
@@ -1364,7 +1400,7 @@ class SimpleStageApp(QMainWindow):
 
     def _on_we_error(self, error_msg: str) -> None:
         self.btn_we.setEnabled(True)
-        self.btn_we.setText("WE Detect")
+        self.btn_we.setText("Detect Spots")
         self.log(f"WE detection error: {error_msg}", "error")
         QMessageBox.critical(self, "WE Detection Error", error_msg)
 
@@ -1394,8 +1430,9 @@ class SimpleStageApp(QMainWindow):
 
         save_dir = str(PROJECT_ROOT / "artifacts" / "we_gpt_detection")
 
-        self.btn_we_gpt.setEnabled(False)
-        self.btn_we_gpt.setText("WE GPT (running...)")
+        if hasattr(self, "btn_we_gpt"):
+            self.btn_we_gpt.setEnabled(False)
+            self.btn_we_gpt.setText("WE GPT (running...)")
 
         self._we_gpt_worker = WeGptWorker(image_path, save_dir)
         self._we_gpt_worker.finished.connect(self._on_we_gpt_finished)
@@ -1403,8 +1440,9 @@ class SimpleStageApp(QMainWindow):
         self._we_gpt_worker.start()
 
     def _on_we_gpt_finished(self, result: dict) -> None:
-        self.btn_we_gpt.setEnabled(True)
-        self.btn_we_gpt.setText("WE GPT")
+        if hasattr(self, "btn_we_gpt"):
+            self.btn_we_gpt.setEnabled(True)
+            self.btn_we_gpt.setText("WE GPT")
 
         if result.get("error"):
             self.log(f"WE GPT error: {result['error']}", "warn")
@@ -1431,8 +1469,9 @@ class SimpleStageApp(QMainWindow):
                 f"Detected: {total}  Accepted: {accepted}  Rejected: {rejected}")
 
     def _on_we_gpt_error(self, error_msg: str) -> None:
-        self.btn_we_gpt.setEnabled(True)
-        self.btn_we_gpt.setText("WE GPT")
+        if hasattr(self, "btn_we_gpt"):
+            self.btn_we_gpt.setEnabled(True)
+            self.btn_we_gpt.setText("WE GPT")
         self.log(f"WE GPT detection error: {error_msg}", "error")
         QMessageBox.critical(self, "WE GPT Detection Error", error_msg)
 
@@ -1987,7 +2026,7 @@ class SimpleStageApp(QMainWindow):
             self.log(f"Live view error: {exc}", "error")
             self.live_timer.stop()
             self.live_running = False
-            self.btn_cam_start.setText("Camera")
+            self.btn_cam_start.setText("Start Camera")
 
     # ================================================================
     # Shutdown
