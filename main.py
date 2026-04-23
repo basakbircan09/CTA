@@ -678,7 +678,8 @@ class SimpleStageApp(QMainWindow):
 
         # ---- Top toolbar ----
         toolbar_layout = QHBoxLayout()
-        toolbar_layout.setSpacing(6)
+        toolbar_layout.setSpacing(8)
+        toolbar_layout.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
 
         self.status_label = QLabel("DISCONNECTED")
         self.status_label.setStyleSheet("""
@@ -746,9 +747,16 @@ class SimpleStageApp(QMainWindow):
         middle_layout.addWidget(left_scroll)
 
         # Camera settings group
-        cam_group  = QGroupBox("Camera Settings")
+        cam_group = QGroupBox("Camera Settings")
         cam_group.setStyleSheet("QGroupBox { font-weight: bold; }")
-        cam_layout = QGridLayout(cam_group)
+        cam_outer = QVBoxLayout(cam_group)
+        cam_outer.setSpacing(6)
+        cam_outer.setContentsMargins(8, 12, 8, 8)
+
+        # Exposure + Gain (always visible)
+        cam_basic = QWidget()
+        cam_layout = QGridLayout(cam_basic)
+        cam_layout.setContentsMargins(0, 0, 0, 0)
         cam_layout.setSpacing(8)
 
         cam_layout.addWidget(QLabel("Exposure (ms):"), 0, 0)
@@ -775,11 +783,29 @@ class SimpleStageApp(QMainWindow):
         btn_gain.clicked.connect(self.on_set_gain)
         cam_layout.addWidget(btn_gain, 1, 2)
 
-        cam_layout.addWidget(QLabel("White Balance:"), 2, 0)
+        cam_outer.addWidget(cam_basic)
+
+        # Advanced toggle button
+        self.btn_wb_toggle = QPushButton("Advanced ▼")
+        self.btn_wb_toggle.setFlat(True)
+        self.btn_wb_toggle.setStyleSheet(
+            "QPushButton { text-align: left; font-weight: bold; padding: 2px 4px; }"
+            "QPushButton:hover { color: #aaaaaa; }"
+        )
+        self.btn_wb_toggle.clicked.connect(self._toggle_wb_section)
+        cam_outer.addWidget(self.btn_wb_toggle)
+
+        # Collapsible white balance section (hidden by default)
+        self.wb_section = QWidget()
+        wb_layout = QGridLayout(self.wb_section)
+        wb_layout.setContentsMargins(0, 4, 0, 0)
+        wb_layout.setSpacing(8)
+
+        wb_layout.addWidget(QLabel("White Balance:"), 0, 0)
         self.combo_wb = QComboBox()
         self.combo_wb.addItems(["Default", "Warm", "Cool", "Reduce NIR", "Custom"])
         self.combo_wb.currentTextChanged.connect(self.on_wb_preset_changed)
-        cam_layout.addWidget(self.combo_wb, 2, 1, 1, 2)
+        wb_layout.addWidget(self.combo_wb, 0, 1, 1, 2)
 
         rgb_layout = QHBoxLayout()
         rgb_layout.setSpacing(4)
@@ -794,11 +820,14 @@ class SimpleStageApp(QMainWindow):
             setattr(self, attr, spin)
             rgb_layout.addWidget(spin)
         rgb_layout.addStretch()
-        cam_layout.addLayout(rgb_layout, 3, 0, 1, 3)
+        wb_layout.addLayout(rgb_layout, 1, 0, 1, 3)
 
         self.btn_apply_wb = QPushButton("Apply White Balance")
         self.btn_apply_wb.clicked.connect(self.on_apply_white_balance)
-        cam_layout.addWidget(self.btn_apply_wb, 4, 0, 1, 3)
+        wb_layout.addWidget(self.btn_apply_wb, 2, 0, 1, 3)
+
+        self.wb_section.setVisible(False)
+        cam_outer.addWidget(self.wb_section)
 
         settings_panel.addWidget(cam_group)
 
@@ -1084,6 +1113,11 @@ class SimpleStageApp(QMainWindow):
     # ================================================================
     # Helpers
     # ================================================================
+
+    def _toggle_wb_section(self) -> None:
+        visible = self.wb_section.isVisible()
+        self.wb_section.setVisible(not visible)
+        self.btn_wb_toggle.setText("Advanced ▲" if not visible else "Advanced ▼")
 
     def log(self, message: str, level: str = "info") -> None:
         prefix = {"info": "[INFO]", "warn": "[WARN]", "error": "[ERROR]"}.get(level, "[INFO]")
