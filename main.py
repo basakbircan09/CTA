@@ -678,7 +678,8 @@ class SimpleStageApp(QMainWindow):
 
         # ---- Top toolbar ----
         toolbar_layout = QHBoxLayout()
-        toolbar_layout.setSpacing(6)
+        toolbar_layout.setSpacing(8)
+        toolbar_layout.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
 
         self.status_label = QLabel("DISCONNECTED")
         self.status_label.setStyleSheet("""
@@ -734,7 +735,6 @@ class SimpleStageApp(QMainWindow):
         # Left panel inside a scroll area so it can be scrolled when content
         # exceeds the window height
         settings_widget = QWidget()
-        settings_widget.setMaximumWidth(260)
         settings_panel  = QVBoxLayout(settings_widget)
         settings_panel.setSpacing(10)
         settings_panel.setContentsMargins(4, 4, 4, 4)
@@ -743,15 +743,20 @@ class SimpleStageApp(QMainWindow):
         left_scroll.setWidget(settings_widget)
         left_scroll.setWidgetResizable(True)
         left_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        left_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-        left_scroll.setFixedWidth(280)
+        left_scroll.setMaximumWidth(310)
         middle_layout.addWidget(left_scroll)
 
         # Camera settings group
-        cam_group  = QGroupBox("Camera Settings")
+        cam_group = QGroupBox("Camera Settings")
         cam_group.setStyleSheet("QGroupBox { font-weight: bold; }")
-        cam_group.setMaximumWidth(260)
-        cam_layout = QGridLayout(cam_group)
+        cam_outer = QVBoxLayout(cam_group)
+        cam_outer.setSpacing(6)
+        cam_outer.setContentsMargins(8, 12, 8, 8)
+
+        # Exposure + Gain (always visible)
+        cam_basic = QWidget()
+        cam_layout = QGridLayout(cam_basic)
+        cam_layout.setContentsMargins(0, 0, 0, 0)
         cam_layout.setSpacing(8)
 
         cam_layout.addWidget(QLabel("Exposure (ms):"), 0, 0)
@@ -778,11 +783,29 @@ class SimpleStageApp(QMainWindow):
         btn_gain.clicked.connect(self.on_set_gain)
         cam_layout.addWidget(btn_gain, 1, 2)
 
-        cam_layout.addWidget(QLabel("White Balance:"), 2, 0)
+        cam_outer.addWidget(cam_basic)
+
+        # Advanced toggle button
+        self.btn_wb_toggle = QPushButton("Advanced ▼")
+        self.btn_wb_toggle.setFlat(True)
+        self.btn_wb_toggle.setStyleSheet(
+            "QPushButton { text-align: left; font-weight: bold; padding: 2px 4px; }"
+            "QPushButton:hover { color: #aaaaaa; }"
+        )
+        self.btn_wb_toggle.clicked.connect(self._toggle_wb_section)
+        cam_outer.addWidget(self.btn_wb_toggle)
+
+        # Collapsible white balance section (hidden by default)
+        self.wb_section = QWidget()
+        wb_layout = QGridLayout(self.wb_section)
+        wb_layout.setContentsMargins(0, 4, 0, 0)
+        wb_layout.setSpacing(8)
+
+        wb_layout.addWidget(QLabel("White Balance:"), 0, 0)
         self.combo_wb = QComboBox()
         self.combo_wb.addItems(["Default", "Warm", "Cool", "Reduce NIR", "Custom"])
         self.combo_wb.currentTextChanged.connect(self.on_wb_preset_changed)
-        cam_layout.addWidget(self.combo_wb, 2, 1, 1, 2)
+        wb_layout.addWidget(self.combo_wb, 0, 1, 1, 2)
 
         rgb_layout = QHBoxLayout()
         rgb_layout.setSpacing(4)
@@ -797,18 +820,20 @@ class SimpleStageApp(QMainWindow):
             setattr(self, attr, spin)
             rgb_layout.addWidget(spin)
         rgb_layout.addStretch()
-        cam_layout.addLayout(rgb_layout, 3, 0, 1, 3)
+        wb_layout.addLayout(rgb_layout, 1, 0, 1, 3)
 
         self.btn_apply_wb = QPushButton("Apply White Balance")
         self.btn_apply_wb.clicked.connect(self.on_apply_white_balance)
-        cam_layout.addWidget(self.btn_apply_wb, 4, 0, 1, 3)
+        wb_layout.addWidget(self.btn_apply_wb, 2, 0, 1, 3)
+
+        self.wb_section.setVisible(False)
+        cam_outer.addWidget(self.wb_section)
 
         settings_panel.addWidget(cam_group)
 
         # Stage control group
         stage_group  = QGroupBox("Stage Control")
         stage_group.setStyleSheet("QGroupBox { font-weight: bold; }")
-        stage_group.setMaximumWidth(260)
         stage_layout = QVBoxLayout(stage_group)
         stage_layout.setSpacing(10)
 
@@ -868,39 +893,31 @@ class SimpleStageApp(QMainWindow):
         separator.setStyleSheet("background-color: #3a3a3a; min-height: 1px; max-height: 1px;")
         stage_layout.addWidget(separator)
 
-        goto_grid = QGridLayout()
-        goto_grid.setSpacing(6)
-        goto_grid.addWidget(QLabel("Go to:"), 0, 0, 1, 4)
+        goto_layout = QHBoxLayout()
+        goto_layout.setSpacing(8)
+        goto_layout.addWidget(QLabel("Go to:"))
         self.spin_goto_x = QDoubleSpinBox()
         self.spin_goto_y = QDoubleSpinBox()
         self.spin_goto_z = QDoubleSpinBox()
-        for spin in (self.spin_goto_x, self.spin_goto_y, self.spin_goto_z):
+        for axis_lbl, spin in [("X:", self.spin_goto_x), ("Y:", self.spin_goto_y), ("Z:", self.spin_goto_z)]:
             spin.setRange(0.0, 300.0)
             spin.setValue(200.0)
             spin.setDecimals(2)
-            spin.setMinimumWidth(70)
-            spin.setMaximumWidth(100)
-        _lx = QLabel("X:"); _lx.setStyleSheet("font-size: 11px;")
-        _ly = QLabel("Y:"); _ly.setStyleSheet("font-size: 11px;")
-        _lz = QLabel("Z:"); _lz.setStyleSheet("font-size: 11px;")
-        goto_grid.addWidget(_lx,              1, 0)
-        goto_grid.addWidget(self.spin_goto_x, 1, 1)
-        goto_grid.addWidget(_ly,              1, 2)
-        goto_grid.addWidget(self.spin_goto_y, 1, 3)
-        goto_grid.addWidget(_lz,              2, 0)
-        goto_grid.addWidget(self.spin_goto_z, 2, 1)
+            spin.setMaximumWidth(80)
+            goto_layout.addWidget(QLabel(axis_lbl))
+            goto_layout.addWidget(spin)
         btn_goto = QPushButton("Go")
         btn_goto.setStyleSheet("font-weight: bold; min-width: 60px;")
         btn_goto.clicked.connect(self.on_goto_position)
-        goto_grid.addWidget(btn_goto,         2, 2, 1, 2)
-        stage_layout.addLayout(goto_grid)
+        goto_layout.addWidget(btn_goto)
+        goto_layout.addStretch()
+        stage_layout.addLayout(goto_layout)
 
         settings_panel.addWidget(stage_group)
 
         # Move to Spot group
         move_spot_group  = QGroupBox("Spot Navigation")
         move_spot_group.setStyleSheet("QGroupBox { font-weight: bold; }")
-        move_spot_group.setMaximumWidth(260)
         move_spot_layout = QGridLayout(move_spot_group)
         move_spot_layout.setSpacing(6)
 
@@ -953,7 +970,6 @@ class SimpleStageApp(QMainWindow):
         )
         sfc_group  = QGroupBox("SFC Calibration (fixed)")
         sfc_group.setStyleSheet("QGroupBox { font-weight: bold; }")
-        sfc_group.setMaximumWidth(260)
         sfc_layout = QGridLayout(sfc_group)
         sfc_layout.setSpacing(4)
 
@@ -979,7 +995,6 @@ class SimpleStageApp(QMainWindow):
         # Alignment Options group
         align_opt_group  = QGroupBox("Alignment Options")
         align_opt_group.setStyleSheet("QGroupBox { font-weight: bold; }")
-        align_opt_group.setMaximumWidth(260)
         align_opt_layout = QGridLayout(align_opt_group)
         align_opt_layout.setSpacing(6)
 
@@ -1098,6 +1113,11 @@ class SimpleStageApp(QMainWindow):
     # ================================================================
     # Helpers
     # ================================================================
+
+    def _toggle_wb_section(self) -> None:
+        visible = self.wb_section.isVisible()
+        self.wb_section.setVisible(not visible)
+        self.btn_wb_toggle.setText("Advanced ▲" if not visible else "Advanced ▼")
 
     def log(self, message: str, level: str = "info") -> None:
         prefix = {"info": "[INFO]", "warn": "[WARN]", "error": "[ERROR]"}.get(level, "[INFO]")
