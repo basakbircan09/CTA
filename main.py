@@ -39,7 +39,7 @@ from device_drivers.thorlabs_camera_wrapper import ThorlabsCamera
 from device_drivers.GPT_Merge import analyze_plate_and_spots
 from device_drivers.spot_analysis.pipeline import run_spot_analysis
 from device_drivers.image_utils import load_image, save_image, bgr_to_rgb
-from device_drivers.spot_alignment import SpotAligner, AlignmentResult
+from device_drivers.spot_alignment import SpotAligner, AlignmentResult, APPROACH_Z
 
 
 # ---------------------------------------------------------------------------
@@ -1811,7 +1811,7 @@ class SimpleStageApp(QMainWindow):
             f"Stage ΔY:      {my:+.3f} mm\n"
             f"Target X:      {target_x:.3f} mm\n"
             f"Target Y:      {target_y:.3f} mm\n"
-            f"Approach Z:    161.0 mm\n"
+            f"Approach Z:    {APPROACH_Z:.1f} mm\n"
             f"Move distance: {move_dist:.2f} mm\n\n"
             "Move the stage?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
@@ -1921,7 +1921,7 @@ class SimpleStageApp(QMainWindow):
             f"Stage ΔY:        {my:+.3f} mm\n"
             f"Target X:        {target_x:.3f} mm\n"
             f"Target Y:        {target_y:.3f} mm\n"
-            f"Approach Z:      161.0 mm\n"
+            f"Approach Z:      {APPROACH_Z:.1f} mm\n"
             f"Move distance:   {move_dist:.2f} mm\n"
             f"Remaining after: {remaining} spot(s)\n\n"
             "Move the stage?",
