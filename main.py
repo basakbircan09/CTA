@@ -1138,7 +1138,7 @@ class SimpleStageApp(QMainWindow):
         bottom_layout.setContentsMargins(0, 0, 0, 0)
         bottom_layout.setSpacing(6)
 
-        self.force_display = ForceSensorDisplay(mock=True)
+        self.force_display = ForceSensorDisplay(mock=False)
         bottom_layout.addWidget(self.force_display)
 
         # Stage coordinates display (updates every 500 ms via _pos_poll_timer)
@@ -1326,6 +1326,7 @@ class SimpleStageApp(QMainWindow):
                 self.log("Camera live view started.", "info")
             except Exception as exc:
                 self.log(f"Live start error: {exc}", "error")
+                QMessageBox.warning(self, "Camera Error", str(exc))
         else:
             self.live_timer.stop()
             self.live_running = False
@@ -1339,8 +1340,10 @@ class SimpleStageApp(QMainWindow):
             try:
                 self.camera.connect()
                 camera_available = True
-            except Exception:
+            except Exception as exc:
                 camera_available = False
+                QMessageBox.warning(self, "Camera Error",
+                    f"Could not connect to camera:\n{exc}\n\nFalling back to file selection.")
 
         if camera_available:
             self._capture_from_camera()
@@ -1779,6 +1782,8 @@ class SimpleStageApp(QMainWindow):
             current = self.motion_service.get_current_position()
         except Exception as exc:
             self.log(f"Cannot read stage position: {exc}", "error")
+            QMessageBox.warning(self, "Stage Error",
+                f"Cannot read stage position:\n{exc}")
             return
 
         # Safety limit check
@@ -1885,6 +1890,8 @@ class SimpleStageApp(QMainWindow):
             current = self.motion_service.get_current_position()
         except Exception as exc:
             self.log(f"Cannot read stage position: {exc}", "error")
+            QMessageBox.warning(self, "Stage Error",
+                f"Cannot read stage position:\n{exc}")
             return
 
         # Safety limit check
@@ -2006,6 +2013,8 @@ class SimpleStageApp(QMainWindow):
             self.log("Contact: sequence aborted.", "warn")
         else:
             self.log(f"Contact: sequence ended with status '{reason}'.", "warn")
+            QMessageBox.warning(self, "Contact Error",
+                f"Contact sequence failed (status: {reason}).\nCheck the log for details.")
 
     # ================================================================
     # Camera settings handlers
