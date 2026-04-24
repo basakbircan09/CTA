@@ -541,7 +541,7 @@ class ForceSensorDisplay(QWidget):
 # ---------------------------------------------------------------------------
 
 class ContactWorker(QThread):
-    """Move stage to APPROACH_Z (161.0 mm), then step down until force > 2.5 N or Z limit."""
+    """Move stage to Z=117, then step down 1 mm at a time until force > 2 N or Z <= 110."""
 
     step_done   = Signal(float)   # emits current Z after each step
     stopped     = Signal(str)     # emits reason: "force", "limit", "error", "aborted"
@@ -1014,7 +1014,7 @@ class SimpleStageApp(QMainWindow):
         )
         self.btn_contact.setMaximumWidth(260)
         self.btn_contact.setToolTip(
-            f"Move stage to approach Z={APPROACH_Z:.1f} mm, then step down 1 mm at a time.\n"
+            "Move stage to approach Z=117 mm, then step down 1 mm at a time.\n"
             "Stops automatically when force sensor exceeds 2 N or Z reaches 110 mm."
         )
         self.btn_contact.clicked.connect(self.on_contact_clicked)
@@ -1951,7 +1951,7 @@ class SimpleStageApp(QMainWindow):
         self._run_steps(steps, spot_label)
 
     # ------------------------------------------------------------------
-    # Contact — approach Z=161 then step down until force hit or Z limit
+    # Contact — approach Z=117 then step down until force hit or Z limit
     # ------------------------------------------------------------------
 
     def on_contact_clicked(self) -> None:
