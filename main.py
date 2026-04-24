@@ -1138,7 +1138,7 @@ class SimpleStageApp(QMainWindow):
         bottom_layout.setContentsMargins(0, 0, 0, 0)
         bottom_layout.setSpacing(6)
 
-        self.force_display = ForceSensorDisplay(mock=True)
+        self.force_display = ForceSensorDisplay(mock=False)
         bottom_layout.addWidget(self.force_display)
 
         # Stage coordinates display (updates every 500 ms via _pos_poll_timer)
