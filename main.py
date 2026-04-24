@@ -1811,7 +1811,7 @@ class SimpleStageApp(QMainWindow):
             f"Stage ΔY:      {my:+.3f} mm\n"
             f"Target X:      {target_x:.3f} mm\n"
             f"Target Y:      {target_y:.3f} mm\n"
-            f"Approach Z:    117.0 mm\n"
+            f"Approach Z:    161.0 mm\n"
             f"Move distance: {move_dist:.2f} mm\n\n"
             "Move the stage?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
@@ -1921,7 +1921,7 @@ class SimpleStageApp(QMainWindow):
             f"Stage ΔY:        {my:+.3f} mm\n"
             f"Target X:        {target_x:.3f} mm\n"
             f"Target Y:        {target_y:.3f} mm\n"
-            f"Approach Z:      117.0 mm\n"
+            f"Approach Z:      161.0 mm\n"
             f"Move distance:   {move_dist:.2f} mm\n"
             f"Remaining after: {remaining} spot(s)\n\n"
             "Move the stage?",
