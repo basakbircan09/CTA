@@ -39,7 +39,7 @@ from device_drivers.thorlabs_camera_wrapper import ThorlabsCamera
 from device_drivers.GPT_Merge import analyze_plate_and_spots
 from device_drivers.spot_analysis.pipeline import run_spot_analysis
 from device_drivers.image_utils import load_image, save_image, bgr_to_rgb
-from device_drivers.spot_alignment import SpotAligner, AlignmentResult
+from device_drivers.spot_alignment import SpotAligner, AlignmentResult, APPROACH_Z
 
 
 # ---------------------------------------------------------------------------
@@ -541,7 +541,7 @@ class ForceSensorDisplay(QWidget):
 # ---------------------------------------------------------------------------
 
 class ContactWorker(QThread):
-    """Move stage to Z=117, then step down 1 mm at a time until force > 2 N or Z <= 110."""
+    """Move stage to APPROACH_Z (161.0 mm), then step down until force > 2.5 N or Z limit."""
 
     step_done   = Signal(float)   # emits current Z after each step
     stopped     = Signal(str)     # emits reason: "force", "limit", "error", "aborted"
@@ -1014,7 +1014,7 @@ class SimpleStageApp(QMainWindow):
         )
         self.btn_contact.setMaximumWidth(260)
         self.btn_contact.setToolTip(
-            "Move stage to approach Z=117 mm, then step down 1 mm at a time.\n"
+            f"Move stage to approach Z={APPROACH_Z:.1f} mm, then step down 1 mm at a time.\n"
             "Stops automatically when force sensor exceeds 2 N or Z reaches 110 mm."
         )
         self.btn_contact.clicked.connect(self.on_contact_clicked)
@@ -1811,7 +1811,7 @@ class SimpleStageApp(QMainWindow):
             f"Stage ΔY:      {my:+.3f} mm\n"
             f"Target X:      {target_x:.3f} mm\n"
             f"Target Y:      {target_y:.3f} mm\n"
-            f"Approach Z:    117.0 mm\n"
+            f"Approach Z:    {APPROACH_Z:.1f} mm\n"
             f"Move distance: {move_dist:.2f} mm\n\n"
             "Move the stage?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
@@ -1921,7 +1921,7 @@ class SimpleStageApp(QMainWindow):
             f"Stage ΔY:        {my:+.3f} mm\n"
             f"Target X:        {target_x:.3f} mm\n"
             f"Target Y:        {target_y:.3f} mm\n"
-            f"Approach Z:      117.0 mm\n"
+            f"Approach Z:      {APPROACH_Z:.1f} mm\n"
             f"Move distance:   {move_dist:.2f} mm\n"
             f"Remaining after: {remaining} spot(s)\n\n"
             "Move the stage?",
@@ -1951,7 +1951,7 @@ class SimpleStageApp(QMainWindow):
         self._run_steps(steps, spot_label)
 
     # ------------------------------------------------------------------
-    # Contact — approach Z=117 then step down until force hit or Z limit
+    # Contact — approach Z=161 then step down until force hit or Z limit
     # ------------------------------------------------------------------
 
     def on_contact_clicked(self) -> None:
