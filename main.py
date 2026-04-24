@@ -401,7 +401,7 @@ class ForceSensorDisplay(QWidget):
 
     _CAL_SLOPE     = -1.996
     _CAL_INTERCEPT =  0.0360
-    _WARN_N        =  4.5
+    _WARN_N        =  4.2
     _CRIT_N        =  4.8
     _STREAM_HZ     =  20
 
@@ -549,7 +549,8 @@ class ContactWorker(QThread):
 
     APPROACH_Z   = 161.0
     STEP_MM      = 0.5
-    FORCE_THRESH = 2.5    # N  (absolute value)
+    FORCE_THRESH    = 4.2   # N — contact detected, stop descent
+    FORCE_EMERGENCY = 4.8   # N — hard stop if contact threshold somehow passed
     Z_LIMIT      = 153.0
 
     def __init__(self, motion_service, force_display: "ForceSensorDisplay", parent=None):
@@ -603,10 +604,18 @@ class ContactWorker(QThread):
                     f"Contact: Z={pos.z:.2f} mm  |  Force={force:.3f} N"
                 )
 
-                if force > self.FORCE_THRESH:
+                if force >= self.FORCE_EMERGENCY:
                     self.status_msg.emit(
-                        f"Contact: force threshold exceeded ({force:.3f} N > "
-                        f"{self.FORCE_THRESH} N) — stopping."
+                        f"Contact: EMERGENCY STOP — force {force:.3f} N >= "
+                        f"{self.FORCE_EMERGENCY} N."
+                    )
+                    self.stopped.emit("force")
+                    return
+
+                if force >= self.FORCE_THRESH:
+                    self.status_msg.emit(
+                        f"Contact: contact detected — force {force:.3f} N >= "
+                        f"{self.FORCE_THRESH} N — stopping."
                     )
                     self.stopped.emit("force")
                     return
