@@ -401,11 +401,11 @@ class ForceSensorDisplay(QWidget):
 
     _CAL_SLOPE     = -1.996
     _CAL_INTERCEPT =  0.0360
-    _WARN_N        =  3.5
-    _CRIT_N        =  4.5
+    _WARN_N        =  4.5
+    _CRIT_N        =  4.8
     _STREAM_HZ     =  20
 
-    def __init__(self, mock: bool = True, port: str = "COM8", parent=None):
+    def __init__(self, mock: bool = True, port: str = "COM4", parent=None):
         super().__init__(parent)
         self._mock    = mock
         self._port    = port
