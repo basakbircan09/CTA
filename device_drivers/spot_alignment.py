@@ -177,6 +177,12 @@ class SpotAligner:
         Rule: move XY first (at current Z), then lower Z to APPROACH_Z.
         Never lower Z before XY is complete.
         """
+        print(
+            f"[SEQ first→{label}]"
+            f"  current=({current_x:.3f}, {current_y:.3f}, {current_z:.3f})"
+            f"  step1: XY→({target_x:.3f}, {target_y:.3f}) Z stays at {current_z:.3f}"
+            f"  step2: Z→{APPROACH_Z:.1f}"
+        )
         return [
             MotionStep(
                 description=f"[{label}] Move XY to alignment position"
@@ -208,6 +214,13 @@ class SpotAligner:
         Rule: raise Z first, then move XY, then lower Z to APPROACH_Z.
         """
         z_raised = current_z + self.Z_RAISE_MM
+        print(
+            f"[SEQ between→{label}]"
+            f"  current=({current_x:.3f}, {current_y:.3f}, {current_z:.3f})"
+            f"  step1: Z raise→{z_raised:.3f}"
+            f"  step2: XY→({target_x:.3f}, {target_y:.3f}) Z stays at {z_raised:.3f}"
+            f"  step3: Z→{APPROACH_Z:.1f}"
+        )
         return [
             MotionStep(
                 description=f"[{label}] Raise Z by {self.Z_RAISE_MM:.0f} mm"
@@ -269,6 +282,13 @@ class SpotAligner:
         stage_move_x = target_x - REF_STAGE_X
         stage_move_y = target_y - REF_STAGE_Y
 
+        print(
+            f"[ALIGN CALC] {spot['label']}"
+            f"  ref_px=({x_ref}, {y_ref})  spot_px=({x_spot}, {y_spot})"
+            f"  pixel_offset=(dx={dx_pixels:+d}, dy={dy_pixels:+d})"
+            f"  mm_offset=(X={real_offset_x:+.3f}, Y={real_offset_y:+.3f})"
+            f"  abs_target=(X={target_x:.3f}, Y={target_y:.3f})"
+        )
         return AlignmentResult(
             label=spot["label"],
             pixel_pos=(x_spot, y_spot),

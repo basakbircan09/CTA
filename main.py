@@ -117,6 +117,10 @@ class SpotAlignmentWorker(QThread):
                     y=step.target_y,
                     z=step.target_z,
                 )
+                print(
+                    f"[MOVE CMD] {step.description}"
+                    f"  →  X={target.x:.3f}  Y={target.y:.3f}  Z={target.z:.3f} mm"
+                )
                 self.motion_service.move_to_position_safe_z(target).result(timeout=120)
                 self.step_done.emit(step.description)
             self.finished.emit()
@@ -1830,6 +1834,29 @@ class SimpleStageApp(QMainWindow):
             return
 
         self.log(f"--- Moving to {spot_label} ---", "info")
+        self.log(
+            f"[DEBUG] Current stage pos:     X={current.x:.3f}  Y={current.y:.3f}  Z={current.z:.3f} mm",
+            "info",
+        )
+        self.log(
+            f"[DEBUG] {spot_label} pixel pos: ({result.pixel_pos[0]}, {result.pixel_pos[1]})"
+            f"  |  ref pixel: ({self._manual_reference['x']}, {self._manual_reference['y']})",
+            "info",
+        )
+        self.log(
+            f"[DEBUG] Pixel offset:          dx={result.pixel_offset[0]:+d} px"
+            f"  dy={result.pixel_offset[1]:+d} px",
+            "info",
+        )
+        self.log(
+            f"[DEBUG] mm offset from ref:    X={result.real_offset_mm[0]:+.3f} mm"
+            f"  Y={result.real_offset_mm[1]:+.3f} mm",
+            "info",
+        )
+        self.log(
+            f"[DEBUG] Absolute stage target: X={target_x:.3f}  Y={target_y:.3f}  Z={APPROACH_Z:.1f} mm",
+            "info",
+        )
 
         if self._at_spot:
             steps = aligner.between_spot_sequence(
@@ -1941,6 +1968,29 @@ class SimpleStageApp(QMainWindow):
             return
 
         self.log(f"--- Moving to {spot_label} ---", "info")
+        self.log(
+            f"[DEBUG] Current stage pos:     X={current.x:.3f}  Y={current.y:.3f}  Z={current.z:.3f} mm",
+            "info",
+        )
+        self.log(
+            f"[DEBUG] {spot_label} pixel pos: ({result.pixel_pos[0]}, {result.pixel_pos[1]})"
+            f"  |  ref pixel: ({self._manual_reference['x']}, {self._manual_reference['y']})",
+            "info",
+        )
+        self.log(
+            f"[DEBUG] Pixel offset:          dx={result.pixel_offset[0]:+d} px"
+            f"  dy={result.pixel_offset[1]:+d} px",
+            "info",
+        )
+        self.log(
+            f"[DEBUG] mm offset from ref:    X={result.real_offset_mm[0]:+.3f} mm"
+            f"  Y={result.real_offset_mm[1]:+.3f} mm",
+            "info",
+        )
+        self.log(
+            f"[DEBUG] Absolute stage target: X={target_x:.3f}  Y={target_y:.3f}  Z={APPROACH_Z:.1f} mm",
+            "info",
+        )
 
         if self._at_spot:
             steps = aligner.between_spot_sequence(
