@@ -101,9 +101,10 @@ class SpotAlignmentWorker(QThread):
     Each step moves to an absolute (x, y, z) position.  The step order
     already encodes all Z-safety rules (raise before XY, lower after).
     """
-    step_done = Signal(str)     # description of the completed step
-    finished  = Signal()
-    error     = Signal(str)
+    step_done  = Signal(str)    # description of the completed step
+    pre_step   = Signal(str)    # diagnostic info emitted before each move
+    finished   = Signal()
+    error      = Signal(str)
 
     def __init__(self, motion_service, steps: list) -> None:
         super().__init__()
@@ -113,6 +114,12 @@ class SpotAlignmentWorker(QThread):
     def run(self) -> None:
         try:
             for step in self.steps:
+                current = self.motion_service.get_current_position()
+                self.pre_step.emit(
+                    f"[PRE-STEP] {step.description}\n"
+                    f"[PRE-STEP]   Current stage:  X={current.x:.3f}  Y={current.y:.3f}  Z={current.z:.3f} mm\n"
+                    f"[PRE-STEP]   Sending target: X={step.target_x:.3f}  Y={step.target_y:.3f}  Z={step.target_z:.3f} mm"
+                )
                 target = Position(
                     x=step.target_x,
                     y=step.target_y,
@@ -1768,6 +1775,9 @@ class SimpleStageApp(QMainWindow):
 
         self._set_move_buttons_enabled(False)
         self._align_worker = SpotAlignmentWorker(self.motion_service, steps)
+        self._align_worker.pre_step.connect(
+            lambda msg: self.log(msg, "info")
+        )
         self._align_worker.step_done.connect(
             lambda desc: self.log(f"  ✓ {desc}", "info")
         )
@@ -1822,6 +1832,11 @@ class SimpleStageApp(QMainWindow):
             QMessageBox.warning(self, "Stage Error",
                 f"Cannot read stage position:\n{exc}")
             return
+
+        self.log(
+            f"  {spot_label}  Current stage:  X={current.x:.3f}  Y={current.y:.3f}  Z={current.z:.3f} mm",
+            "info"
+        )
 
         # Safety limit check
         move_dist = math.hypot(target_x - current.x, target_y - current.y)
@@ -1930,6 +1945,11 @@ class SimpleStageApp(QMainWindow):
             QMessageBox.warning(self, "Stage Error",
                 f"Cannot read stage position:\n{exc}")
             return
+
+        self.log(
+            f"  {spot_label}  Current stage:  X={current.x:.3f}  Y={current.y:.3f}  Z={current.z:.3f} mm",
+            "info"
+        )
 
         # Safety limit check
         move_dist = math.hypot(target_x - current.x, target_y - current.y)
