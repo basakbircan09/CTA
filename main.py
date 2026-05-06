@@ -548,7 +548,7 @@ class ContactWorker(QThread):
     status_msg  = Signal(str)     # informational log messages
 
     APPROACH_Z   = 161.0
-    STEP_MM      = 0.5
+    STEP_MM      = 0.1
     FORCE_THRESH    = 4.2   # N — contact detected, stop descent
     FORCE_EMERGENCY = 4.8   # N — hard stop if contact threshold somehow passed
     Z_LIMIT      = 153.0
