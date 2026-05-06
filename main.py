@@ -2,6 +2,7 @@ import json
 import math
 import os
 import sys
+import time
 import os
 from pathlib import Path
 from openpyxl import Workbook
@@ -583,6 +584,29 @@ class ContactWorker(QThread):
             # --- Phase 2: step down ---
             while not self._abort:
                 pos = self._motion.get_current_position()
+
+                # Check force before moving — catches any force that built up
+                # at the end of the previous step or during position read.
+                time.sleep(0.060)
+                force = abs(self._force.current_force_n)
+                self.status_msg.emit(
+                    f"Contact: Z={pos.z:.2f} mm  |  Force={force:.3f} N"
+                )
+                if force >= self.FORCE_EMERGENCY:
+                    self.status_msg.emit(
+                        f"Contact: EMERGENCY STOP — force {force:.3f} N >= "
+                        f"{self.FORCE_EMERGENCY} N."
+                    )
+                    self.stopped.emit("force")
+                    return
+                if force >= self.FORCE_THRESH:
+                    self.status_msg.emit(
+                        f"Contact: contact detected — force {force:.3f} N >= "
+                        f"{self.FORCE_THRESH} N — stopping."
+                    )
+                    self.stopped.emit("force")
+                    return
+
                 next_z = pos.z - self.STEP_MM
 
                 if next_z < self.Z_LIMIT:
@@ -598,6 +622,10 @@ class ContactWorker(QThread):
 
                 pos = self._motion.get_current_position()
                 self.step_done.emit(pos.z)
+
+                # Flush: wait one full sensor cycle so the GUI thread processes
+                # any readings that arrived while the stage was moving.
+                time.sleep(0.060)
 
                 force = abs(self._force.current_force_n)
                 self.status_msg.emit(
