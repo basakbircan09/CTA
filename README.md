@@ -1,96 +1,113 @@
-# CTA – Computational Testing Apparatus
+# CTA – Camera, Thorlabs & Automation
 
-A laboratory automation desktop application for controlling a 3-axis PI motion stage, capturing images with a Thorlabs camera, detecting electrochemical plates, and analysing working-electrode spots for defects (bubbles, holes, non-uniformity).
+A PySide6 desktop application for automated electrochemistry sample-array processing. It integrates a **Thorlabs CS165CU** scientific camera, a **PI three-axis XYZ translation stage** (3× C-863 Mercury controllers), and a full **OpenCV-based vision pipeline** for plate finding, spot detection, defect inspection, and SFC alignment.
+
+CTA is designed as a subsystem for the **GOED (General Orchestrator for Electrochemistry Devices)** platform.
 
 ---
 
 ## Table of Contents
 
 1. [Overview](#overview)
-2. [Architecture](#architecture)
-3. [Project Structure](#project-structure)
-4. [Hardware Requirements](#hardware-requirements)
-5. [Software Requirements & Dependencies](#software-requirements--dependencies)
-6. [How to Run](#how-to-run)
-7. [Application UI Layout](#application-ui-layout)
-8. [Button-by-Button Walkthrough](#button-by-button-walkthrough)
-   - [Connect](#1-connect)
-   - [Initialize](#2-initialize)
-   - [Camera](#3-camera-startlive)
-   - [Capture](#4-capture)
-   - [Plate Detect](#5-plate-detect)
-   - [Auto Adjust](#6-auto-adjust)
-   - [WE Detect](#7-we-detect)
+2. [The Normal Workflow](#the-normal-workflow)
+3. [Architecture](#architecture)
+4. [Project Structure](#project-structure)
+5. [Hardware Requirements](#hardware-requirements)
+6. [Software Requirements & Installation](#software-requirements--installation)
+7. [How to Run](#how-to-run)
+8. [Application UI – Button-by-Button](#application-ui--button-by-button)
 9. [Camera Settings Panel](#camera-settings-panel)
 10. [Stage Control Panel](#stage-control-panel)
-11. [Full File Reference](#full-file-reference)
-    - [main.py](#mainpy)
-    - [device_drivers/image_utils.py](#device_driversimage_utilspy)
-    - [device_drivers/GPT_Merge.py](#device_driversgpt_mergepy)
-    - [device_drivers/spot_analysis/](#device_driversspot_analysis)
-    - [device_drivers/thorlabs_camera_wrapper.py](#device_driversthorldabs_camera_wrapperpy)
-    - [device_drivers/plate_finder.py](#device_driversplate_finderpy)
-    - [device_drivers/plate_auto_adjuster.py](#device_driversplate_auto_adjusterpy)
-    - [device_drivers/PI_Control_System/](#device_driverspi_control_system)
-12. [Output Artifacts](#output-artifacts)
-13. [Configuration](#configuration)
+11. [Vision & Analysis Pipeline](#vision--analysis-pipeline)
+12. [Spot Analysis Module](#spot-analysis-module)
+13. [Spot Alignment (Pixel → Stage)](#spot-alignment-pixel--stage)
+14. [Full File Reference](#full-file-reference)
+15. [Output Artifacts](#output-artifacts)
+16. [Configuration](#configuration)
+17. [Testing](#testing)
+18. [Key Design Decisions](#key-design-decisions)
 
 ---
 
 ## Overview
 
-CTA integrates three physical subsystems into a single PySide6 GUI:
+CTA brings three physical subsystems together in one GUI:
 
-| Subsystem | Purpose |
-|---|---|
-| **PI XYZ Stage** | Nanometre-precision motion stage (3 axes, USB-serial) |
-| **Thorlabs Camera** | Scientific camera for image acquisition |
-| **Image Analysis** | OpenCV-based plate finding, spot detection, and defect inspection |
+| Subsystem | Hardware | Purpose |
+|---|---|---|
+| **PI XYZ Stage** | 3× C-863 Mercury controllers | Sub-millimetre positioning of the plate under the camera or SFC probe |
+| **Thorlabs Camera** | CS165CU (pylablib) | Live view and image capture for vision analysis |
+| **Vision Pipeline** | OpenCV, NumPy | Plate detection, working-electrode spot detection, defect inspection, SFC alignment |
 
-The typical workflow is:
+---
+
+## The Normal Workflow
+
+This is the step-by-step sequence an operator follows every session:
 
 ```
-Connect → Initialize → Camera Live → Capture → Plate Detect → Auto Adjust → WE Detect
+1. Connect     →  USB-enumerate all three PI axes (X, Y, Z)
+2. Initialize  →  Run reference moves in safe order (Z first, then X, Y)
+3. Start Live  →  Begin camera preview at ~100 ms poll rate
+4. Capture     →  Snap a full-resolution image and save it to disk
+5. Plate Detect→  Locate the red-framed plate in the captured image
+6. Auto Adjust →  Closed-loop centering: move stage until plate is centred (≤10 iterations, 5 mm steps)
+7. WE Detect   →  Detect all working-electrode spots; inspect each for defects; export Excel report
 ```
+
+After **WE Detect** the operator can also use the **Stage Control Panel** to manually jog axes and the camera settings panel to tune exposure, gain, and white balance.
 
 ---
 
 ## Architecture
 
-The codebase follows a strict three-layer separation:
-
 ```
-┌────────────────────────────────────────┐
-│   main.py  (GUI only – no OpenCV)      │
-│   SpotAnalysisWorker (QThread)         │
-└────────────┬───────────────────────────┘
-             │
-┌────────────▼───────────────────────────┐
-│   device_drivers/spot_analysis/        │
-│     pipeline.py  ← public API          │
-│     detection.py                       │
-│     inspection.py                      │
-│     visualization.py                   │
-│     excel_export.py                    │
-│     config.py  ← all tuning constants  │
-└────────────┬───────────────────────────┘
-             │
-┌────────────▼───────────────────────────┐
-│   device_drivers/  (hardware drivers)  │
-│     PI_Control_System/                 │
-│     thorlabs_camera_wrapper.py         │
-│     plate_finder.py                    │
-│     plate_auto_adjuster.py             │
-│     GPT_Merge.py  (plate detection)    │
-│     image_utils.py (I/O helpers)       │
-└────────────────────────────────────────┘
+main.py
+│
+├── gui/app_window.py          ← Main orchestrator (SimpleStageApp)
+│   └── gui/widgets/
+│       ├── toolbar.py         ← WorkflowToolbar (Connect → WE Detect buttons)
+│       ├── camera_settings.py ← Exposure / gain / white-balance controls
+│       ├── stage_control.py   ← Per-axis jog controls + absolute move
+│       ├── image_viewer.py    ← Zoomable image display (QGraphicsView)
+│       └── log_panel.py       ← Scrollable timestamped log
+│
+├── device_drivers/
+│   ├── thorlabs_camera_wrapper.py   ← pylablib snap/live/settings
+│   ├── GPT_Merge_v3.py              ← Plate + spot detection (active version)
+│   ├── plate_finder.py              ← HSV colour segmentation → movement hints
+│   ├── plate_auto_adjuster.py       ← Closed-loop iterative centering
+│   ├── spot_alignment.py            ← Pixel-to-stage coordinate mapping
+│   ├── image_utils.py               ← load / save / colour conversion helpers
+│   └── spot_analysis/               ← Modular spot inspection pipeline
+│       ├── pipeline.py              ← Public entry-point: run_spot_analysis()
+│       ├── detection.py             ← Preprocessing + contour-based spot finding
+│       ├── inspection.py            ← Per-spot defect scoring (MAD / quantile)
+│       ├── visualization.py         ← Accept/reject overlay images
+│       ├── excel_export.py          ← spot_results.xlsx export (openpyxl)
+│       └── config.py                ← All tunable detection constants
+│
+└── device_drivers/PI_Control_System/   ← Self-contained PI stage subsystem
+    ├── app_factory.py               ← create_services(use_mock) wires everything
+    ├── core/models.py               ← Frozen dataclasses: Axis, Position, states
+    ├── core/hardware/interfaces.py  ← AxisController ABC
+    ├── hardware/pi_manager.py       ← Coordinates 3 axes, enforces Z→X→Y ref order
+    ├── hardware/pi_controller.py    ← Real pipython implementation
+    ├── hardware/mock_controller.py  ← Deterministic mock for tests
+    ├── services/event_bus.py        ← Thread-safe pub/sub
+    ├── services/connection_service.py
+    ├── services/motion_service.py   ← Moves + safe Z-ordering + sequences
+    └── config/                      ← 7-layer merge (defaults.json → env vars)
 ```
 
-**Key design rules:**
-- `main.py` never imports `cv2` or `numpy` directly.  All OpenCV I/O goes through `device_drivers/image_utils.py`.
-- `WE Detect` runs in a `QThread` (`SpotAnalysisWorker`) so the UI stays responsive during analysis.
-- All detection tuning constants live exclusively in `device_drivers/spot_analysis/config.py`.
-- All output files are written under `artifacts/`.
+### Threading model
+
+| Thread | What runs there |
+|---|---|
+| Main (Qt event loop) | All GUI rendering, QTimer camera poll (~100 ms) |
+| `ThreadPoolExecutor` (4 × "PIControl") | All blocking hardware I/O: USB enumeration, reference moves, motor waits |
+| `QThread` workers | `SpotAnalysisWorker` and `WeGptWorker` — keep WE Detect off the UI thread |
+| `EventBus` | Services publish from executor threads; GUI uses `QMetaObject.invokeMethod` to hop back to the main thread |
 
 ---
 
@@ -98,849 +115,410 @@ The codebase follows a strict three-layer separation:
 
 ```
 CTA/
-├── main.py                                  # Application entry point – GUI only
-├── requirements.txt                         # Python dependencies
-│
+├── main.py                       ← Entry point (sets DLL paths, launches app)
+├── requirements.txt
+├── config/
+│   └── app_config_loader.py      ← Loads app_config.yaml (mock mode, DLL dirs)
+├── gui/
+│   ├── app_window.py
+│   └── widgets/
 ├── device_drivers/
-│   ├── image_utils.py                       # load_image / save_image / bgr_to_rgb (no cv2 in main.py)
-│   ├── GPT_Merge.py                         # Plate bounding-box detector (used by Plate Detect)
-│   ├── plate_finder.py                      # Gray-plate-on-red-background detector
-│   ├── plate_auto_adjuster.py               # Feedback loop: capture → detect → move stage
-│   ├── thorlabs_camera_wrapper.py           # Thorlabs camera connect/capture/settings
-│   ├── we_detection.py                      # Legacy file – NOT used anywhere in the app
-│   │
-│   ├── spot_analysis/                       # Modular spot analysis pipeline (WE Detect)
-│   │   ├── __init__.py
-│   │   ├── config.py                        # ALL tuning constants – edit here to tune
-│   │   ├── detection.py                     # Spot detection, sort_and_label, find_missing_spots
-│   │   ├── inspection.py                    # Per-spot defect inspection (MAD-based)
-│   │   ├── visualization.py                 # Colour-coded contour overlays
-│   │   ├── excel_export.py                  # Export results to .xlsx
-│   │   └── pipeline.py                      # run_spot_analysis() – public entry point
-│   │
-│   └── PI_Control_System/
-│       ├── app_factory.py                   # Wires all PI services together
-│       ├── config/
-│       │   ├── defaults.json                # COM ports, serial numbers, travel ranges
-│       │   └── loader.py                    # Reads defaults.json into Python objects
-│       ├── core/
-│       │   └── models.py                    # Axis enum, Position, ConnectionState, etc.
-│       ├── hardware/
-│       │   ├── pi_controller.py             # Real PIAxisController (pipython)
-│       │   ├── mock_controller.py           # Simulated MockAxisController for testing
-│       │   └── pi_manager.py               # PIControllerManager – holds all 3 axis controllers
-│       ├── services/
-│       │   ├── event_bus.py                 # Pub/sub event bus
-│       │   ├── connection_service.py        # Connect / initialize / shutdown logic
-│       │   └── motion_service.py            # move_to, jog, absolute move (all async)
-│       └── gui/
-│           └── main_window.py               # Legacy standalone PI GUI (not used in CTA)
-│
-├── artifacts/                               # All output images and Excel files
-│   ├── captures/                            # Raw captured images from camera
-│   ├── plate_detection/                     # Cropped plate images from Plate Detect
-│   ├── we_detection/                        # overlay.png + spot_results.xlsx from WE Detect
-│   └── auto_adjust/                         # Per-iteration images from Auto Adjust loop
-│
-└── config/                                  # Reserved for future app-level config
+│   ├── PI_Control_System/
+│   │   └── tests/                ← 123 pytest tests (no hardware needed)
+│   └── spot_analysis/
+├── lib/
+│   └── pi_dlls/                  ← PI GCS2 DLL files (Windows)
+├── artifacts/
+│   ├── plate_detection/          ← Plate detect output images
+│   └── we_detection/             ← WE Detect debug images + spot_results.xlsx
+├── doc/                          ← Supporting documentation
+├── examples/                     ← Example images / scripts
+├── _archive/                     ← Previous implementations (read-only reference)
+└── REPORT.md                     ← Lab report / experiment notes
 ```
 
 ---
 
 ## Hardware Requirements
 
-| Hardware | Details |
+| Item | Details |
 |---|---|
-| **PI Linear Stage – X axis** | COM5, baud 115200, serial `025550131`, stage model `62309260` |
-| **PI Linear Stage – Y axis** | COM3, baud 115200, serial `025550143`, stage model `62309260` |
-| **PI Linear Stage – Z axis** | COM4, baud 115200, serial `025550149`, stage model `62309260` |
-| **Thorlabs TL Camera** | Any camera supported by the Thorlabs TL SDK; DLL must be in `C:\Program Files\Thorlabs\ThorImageCAM\Bin` |
+| **PI C-863 Mercury** | 3 units, one per axis (X, Y, Z). Connected via USB-serial. |
+| **Thorlabs CS165CU** | USB3 scientific camera. Requires Thorlabs ThorCam SDK DLLs. |
+| **Windows 10/11** | DLL loading (`os.add_dll_directory`) is Windows-only. |
 
-Travel ranges:
-- X: 5 – 200 mm
-- Y: 0 – 200 mm
-- Z: 15 – 200 mm
-
-Park position (post-initialization): **200 mm on all axes**
-
-Reference mode for all axes: **FPL** (Forward Position Limit)
+> **No hardware?** Run with `use_mock=True` (see [How to Run](#how-to-run)). The mock stage behaves identically for all tests and most GUI operations.
 
 ---
 
-## Software Requirements & Dependencies
-
-```
-PySide6        # GUI framework
-opencv-python  # Image processing (cv2)
-numpy          # Numerical operations
-openpyxl       # Excel export (.xlsx)
-pipython       # PI GCS2 controller communication
-pylablib       # Thorlabs TL camera SDK wrapper
-```
-
-Install with:
+## Software Requirements & Installation
 
 ```bash
 pip install -r requirements.txt
 ```
 
-The Thorlabs TL camera SDK DLLs (`thorlabs_tsi_camera_sdk`, `thorlabs_unified_sdk`) must also be installed on the system.  The PI GCS2 DLL files (`PI_GCS2_DLL.dll`, `E816_DLL.dll`) must be present in the project root directory.
+`requirements.txt`:
+```
+PySide6
+pipython
+numpy
+pylablib
+opencv-python
+scikit-image
+PyYAML
+tifffile
+openpyxl
+pytest
+pytest-qt
+```
+
+**Additional DLLs (Windows only)**
+
+- PI GCS2 DLLs → place in `lib/pi_dlls/` (or set `PI_STAGE_CONFIG_PATH`)
+- Thorlabs ThorCam SDK → typically `C:\Program Files\Thorlabs\ThorImageCAM\Bin`; configure path in `config/app_config.yaml`
 
 ---
 
 ## How to Run
 
 ```bash
+# With real hardware
+python main.py
+
+# With mock stage (no hardware needed)
+# Edit config/app_config.yaml: use_mock: true
+# OR directly in code: SimpleStageApp(use_mock=True)
 python main.py
 ```
 
-The application starts with `use_mock=False`, meaning it expects real PI controllers and a real Thorlabs camera.  If the hardware is absent the app still launches — camera absence falls back to a file-picker, and stage errors are shown in message boxes.
-
-To run with simulated (mock) hardware for development/testing, change the last lines of `main.py`:
-
-```python
-window = SimpleStageApp(use_mock=True)
-```
+`main.py` sets up PI DLL paths **before** any imports, then launches `SimpleStageApp`.
 
 ---
 
-## Application UI Layout
+## Application UI – Button-by-Button
 
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│  ● STATUS   [Connect] [Initialize] [Camera] [Capture]               │
-│             [Plate Detect] [Auto Adjust] [WE Detect]                │
-├────────────────────────┬────────────────────────────────────────────┤
-│  Camera Settings       │                                            │
-│  ─────────────────     │                                            │
-│  Exposure (ms): [    ] │         Image Display Area                 │
-│  Gain (dB):     [    ] │         (800 × 500 px minimum)            │
-│  White Balance: [▼   ] │         Live / Captured / Processed        │
-│  R: [ ] G: [ ] B: [ ] │                                            │
-│  [Apply White Balance] │                                            │
-│                        │                                            │
-│  Stage Control         │                                            │
-│  ─────────────────     │                                            │
-│  Position: X Y Z       │                                            │
-│  Step(mm): [   ] [↻]   │                                            │
-│  X: [−] [+]            │                                            │
-│  Y: [−] [+]            │                                            │
-│  Z: [−] [+]            │                                            │
-│  Go to: X[ ] Y[ ] Z[ ] │                                            │
-│  [Go]                  │                                            │
-├────────────────────────┴────────────────────────────────────────────┤
-│  Log                                                                │
-│  [INFO] ...                                                         │
-└─────────────────────────────────────────────────────────────────────┘
-```
-
----
-
-## Button-by-Button Walkthrough
+The toolbar runs left-to-right in the order you use them:
 
 ### 1. Connect
-
-**Button:** `Connect`
-**Handler:** `SimpleStageApp.on_connect_clicked()` — `main.py`
-
-**What it does:**
-
-Establishes serial USB connections to all three PI motion controllers (X, Y, Z).
-
-**Execution flow:**
-
-1. Sets status to yellow `CONNECTING...`
-2. Calls `self.connection_service.connect()` — async, returns a `Future`.
-3. Blocks `.result(timeout=30)` until connection resolves.
-4. On success: status turns `CONNECTED`.
-5. On failure: status turns `ERROR`, a critical message box is shown.
-
-**Files involved:**
-
-| File | Role |
-|---|---|
-| `main.py` | Button handler, status update, error dialog |
-| `device_drivers/PI_Control_System/services/connection_service.py` | `connect()` — dispatches to thread executor |
-| `device_drivers/PI_Control_System/hardware/pi_manager.py` | `PIControllerManager` — iterates over all 3 axis controllers |
-| `device_drivers/PI_Control_System/hardware/pi_controller.py` | `PIAxisController.connect()` — opens GCSDevice over COM port |
-| `device_drivers/PI_Control_System/config/defaults.json` | COM ports, baud rates, serial numbers |
-| `device_drivers/PI_Control_System/core/models.py` | `ConnectionState` enum |
-| `device_drivers/PI_Control_System/services/event_bus.py` | Publishes `CONNECTION_STARTED`, `CONNECTION_SUCCEEDED` |
-
----
+- Scans USB ports for PI C-863 controllers.
+- Establishes serial connections for all three axes (X, Y, Z).
+- Runs asynchronously in the `PIControl` thread pool.
+- On success: **Initialize** becomes enabled.
 
 ### 2. Initialize
+- Runs reference moves in the mandatory safe order: **Z first, then X, then Y**.
+- Each axis moves to its hardware limit switch and sets that as the origin.
+- On completion: motion commands and **Start Live** become available.
 
-**Button:** `Initialize`
-**Handler:** `SimpleStageApp.on_initialize_clicked()` — `main.py`
-
-**What it does:**
-
-References (homes) all three axes so the controller knows absolute positions, then moves the stage to the park position (200, 200, 200 mm).
-
-**Execution flow:**
-
-1. Checks `connection_service.state.connection == CONNECTED`; warns if not.
-2. Sets status to `INITIALIZING...`
-3. Calls `connection_service.initialize()` — blocks up to 120 s (stage moves to limit switch).
-4. Sets status to `PARKING...`
-5. Calls `motion_service.move_to_position_safe_z(Position(200, 200, 200))`.
-   - Safe-Z: Z moves first when going higher, last when going lower.
-6. On success: status turns `READY`.
-
-**Referencing order** (from `defaults.json`): Z → X → Y
-
-**Files involved:**
-
-| File | Role |
-|---|---|
-| `main.py` | Handler, park position, status updates |
-| `device_drivers/PI_Control_System/services/connection_service.py` | `initialize()` — FPL homing per axis |
-| `device_drivers/PI_Control_System/hardware/pi_controller.py` | `reference()` — GCS FPL command |
-| `device_drivers/PI_Control_System/services/motion_service.py` | `move_to_position_safe_z()` |
-| `device_drivers/PI_Control_System/core/models.py` | `Position` dataclass |
-| `device_drivers/PI_Control_System/config/defaults.json` | `park_position`, `reference_order` |
-
----
-
-### 3. Camera (Start / Live)
-
-**Button:** `Camera`
-**Handler:** `SimpleStageApp.on_cam_start_clicked()` — `main.py`
-
-**What it does:**
-
-Toggles live camera preview at ~10 fps.
-
-**Execution flow (Start):**
-
-1. Connects camera if not already connected.
-2. Starts `self.live_timer` (100 ms interval → ~10 fps).
-3. Every 100 ms `_update_live_view()` fires:
-   - Calls `camera.grab_frame()` → BGR `ndarray`.
-   - Calls `_show_image(frame)` → `bgr_to_rgb()` + `QPixmap` → displayed in panel.
-
-**Execution flow (Stop):**
-
-1. Stops the timer; resets button text.
-
-**Files involved:**
-
-| File | Role |
-|---|---|
-| `main.py` | Toggle logic, QTimer, `_update_live_view()`, `_show_image()` |
-| `device_drivers/thorlabs_camera_wrapper.py` | `connect()`, `grab_frame()` |
-| `device_drivers/image_utils.py` | `bgr_to_rgb()` — converts for Qt display |
-
-**`grab_frame()` detail** (`thorlabs_camera_wrapper.py`):
-
-- `self._cam.snap()` (pylablib) acquires one frame.
-- If `uint16`: normalises per-channel to 0–255.
-- If 2D (grayscale): converts to BGR.
-- Applies software white balance via `_apply_white_balance()`.
-- Returns BGR `uint8` `ndarray`.
-
----
+### 3. Start Live / Stop Live
+- Toggles the camera preview using a 100 ms `QTimer`.
+- Each tick calls `ThorlabsCamera.snap()` and updates the `ImageViewer`.
+- Stop live before capturing to get a stable full-resolution frame.
 
 ### 4. Capture
-
-**Button:** `Capture`
-**Handler:** `SimpleStageApp.on_capture_clicked()` — `main.py`
-
-**What it does:**
-
-Takes a still image. Camera path saves the frame to disk. No-camera path opens a file picker.
-
-**Execution flow:**
-
-1. Tries to connect camera if not already connected.
-2. **Camera available** (`_capture_from_camera()`):
-   - Builds filename from exposure/gain/WB: `Photo_{exp}_{gain}_{R}_{G}_{B}.png`.
-   - Finds a unique filename if needed.
-   - `camera.save_frame(filename)` → captures and writes PNG.
-   - Stores path in `self.last_image_path`.
-   - Calls `_show_image(frame)`.
-3. **No camera** (`_capture_from_file()`):
-   - Warns in log.
-   - Opens `QFileDialog.getOpenFileName`.
-   - `load_image(path)` reads the file (via `image_utils.py`).
-   - Stores path in `self.last_image_path`.
-   - Calls `_show_image(img)`.
-
-**Files involved:**
-
-| File | Role |
-|---|---|
-| `main.py` | Handler, filename construction, `_capture_from_camera()`, `_capture_from_file()` |
-| `device_drivers/thorlabs_camera_wrapper.py` | `connect()`, `save_frame()` |
-| `device_drivers/image_utils.py` | `load_image()` — reads file in no-camera path |
-
-**Output:** `artifacts/captures/Photo_<exp>_<gain>_<R>_<G>_<B>[_N].png`
-
----
+- Snaps a full-resolution image from the camera.
+- Saves it to `artifacts/plate_detection/captured_<timestamp>.png`.
+- Displays it in the `ImageViewer`.
+- Enables **Plate Detect**.
 
 ### 5. Plate Detect
-
-**Button:** `Plate Detect`
-**Handler:** `SimpleStageApp.on_plate_clicked()` — `main.py`
-
-**What it does:**
-
-Finds the electrochemical plate bounding box in the captured image and saves the cropped plate for WE Detect.
-
-**Execution flow:**
-
-1. Uses `self.last_image_path`; prompts file picker if None.
-2. Calls `analyze_plate_and_spots(image_path, save_dir)` from `GPT_Merge.py`.
-3. On error / no plate detected: shows warning dialog.
-4. Calls `save_image(plate_path, plate_img)` (via `image_utils.py`) to write `plate.png`.
-5. Stores `plate_path` in `self.last_plate_path` for WE Detect.
-6. Calls `_show_image(plate_img)`.
-
-**`analyze_plate_and_spots()` detail** (`GPT_Merge.py`):
-
-1. `cv2.imread` → load image.
-2. `resize_image(img, resize_percent)` → full resolution (100%).
-3. `detect_plate(img)`:
-   - Grayscale → `GaussianBlur` (3×3) → `Canny` (45, 40) → `dilate`.
-   - `findContours` external → largest contour → `boundingRect`.
-4. Crop plate region.
-5. `detect_spots(plate)`:
-   - Grayscale → `GaussianBlur` (5×5).
-   - `adaptiveThreshold` (Gaussian, blockSize=49, C=3).
-   - `morphologyEx` MORPH_OPEN (3×3).
-   - Filter by area (100–15,000 px²) and circularity (≥ 0.2).
-6. `sort_and_label(spots)` → labels A1, A2, B1, B2, …
-7. `compute_inspection_radius(spots)` → `r_check = 3 × (min_radius / 4)`.
-8. `has_bubble_or_hole(gray, spot, r_check)`:
-   - **Bubble:** coefficient of variation `std/mean > 0.3`.
-   - **Hole:** Otsu threshold + RETR_CCOMP; any contour with a parent → hole.
-9. Saves `all_detected.png` and `accepted_only.png`.
-10. Returns full result dict.
-
-**Files involved:**
-
-| File | Role |
-|---|---|
-| `main.py` | Handler, file picker, path storage, display |
-| `device_drivers/GPT_Merge.py` | `analyze_plate_and_spots()` — full plate pipeline |
-| `device_drivers/image_utils.py` | `save_image()` — writes plate.png |
-
-**Output:** `artifacts/plate_detection/plate.png`
-
----
+- Runs `GPT_Merge_v3.analyze_plate_and_spots()` on the captured image.
+- Uses Canny edge detection + morphology to find the plate boundary.
+- Uses adaptive threshold + contour filtering to find electrode spots.
+- Labels spots with A1/A2/B1/B2 etc. nomenclature.
+- Overlays results on the image and logs a summary.
+- Enables **Auto Adjust**.
 
 ### 6. Auto Adjust
-
-**Button:** `Auto Adjust`
-**Handler:** `SimpleStageApp.on_adjust_clicked()` — `main.py`
-
-**What it does:**
-
-Closed-loop feedback loop: capture → detect plate position → move stage → repeat until centred or max iterations reached.
-
-**Execution flow:**
-
-1. Checks `_is_stage_ready()`.
-2. Connects camera if needed.
-3. Calls `auto_adjust_plate(motion_service, camera, save_dir, step_mm=5.0, max_iterations=10)`.
-4. Logs all `steps_log` messages.
-5. Shows success or warning dialog.
-
-**`auto_adjust_plate()` detail** (`plate_auto_adjuster.py`):
-
-For each iteration (up to 10):
-1. `camera.save_frame(img_path)` → `artifacts/auto_adjust/auto_adjust_{i}.png`.
-2. `gray_plate_on_red(img_path, margin_frac=0.02)`:
-   - HSV conversion → two red-hue masks (0–10° and 170–180°) → combined.
-   - Morphological close (5×5, 2 iterations).
-   - Largest red contour → `red_bbox`.
-   - Inverted mask → threshold dark regions → 4-corner polygon filter.
-   - Checks if plate bbox is inside red bbox with 2% margin on each side.
-   - Computes direction hint: `"left"`, `"right"`, `"up"`, `"down"`, or compound.
-3. If `fully_in_frame` → success.
-4. Maps hint to `move_axis_relative(X or Y, ±step_mm)`.
-5. Waits for futures before next iteration.
-
-**Files involved:**
-
-| File | Role |
-|---|---|
-| `main.py` | Handler, stage-ready check, log output |
-| `device_drivers/plate_auto_adjuster.py` | `auto_adjust_plate()` — feedback loop |
-| `device_drivers/plate_finder.py` | `gray_plate_on_red()` — HSV plate visibility check |
-| `device_drivers/thorlabs_camera_wrapper.py` | `save_frame()` per iteration |
-| `device_drivers/PI_Control_System/services/motion_service.py` | `move_axis_relative()` |
-
-**Output:** `artifacts/auto_adjust/auto_adjust_N.png` + `*_checked.png` per iteration.
-
----
+- Calls `plate_auto_adjuster.auto_adjust_plate()`.
+- Runs `plate_finder.py` (HSV colour segmentation) to get a movement hint: `"left"`, `"right"`, `"up"`, `"down"`, or `"ok"`.
+- Moves the stage by 5 mm in the indicated direction.
+- Repeats up to 10 iterations until hint is `"ok"` or iteration limit reached.
+- Enables **WE Detect** once complete.
 
 ### 7. WE Detect
-
-**Button:** `WE Detect`
-**Handler:** `SimpleStageApp.on_we_clicked()` — `main.py`
-
-**What it does:**
-
-Runs the full modular spot analysis pipeline in a **background thread** so the UI stays responsive.  Each spot is inspected for defects; results are colour-coded (blue = good, red = bad) and exported to Excel.
-
-**Execution flow:**
-
-1. Uses `self.last_plate_path`; prompts file picker if None.
-2. Disables the `WE Detect` button and labels it `"WE Detect (running…)"`.
-3. Creates `SpotAnalysisWorker(image_path, save_dir)` (`QThread`).
-4. Connects `worker.finished` → `_on_we_finished()` and `worker.error` → `_on_we_error()`.
-5. Calls `worker.start()` — analysis runs in background.
-6. UI remains fully responsive (can jog stage, change exposure, etc.).
-7. On completion `_on_we_finished(result)` fires on the UI thread:
-   - Displays overlay image.
-   - Logs: detected, accepted, rejected, rejected labels, missing spots, Excel path.
-   - Shows information or warning dialog.
-
-**`run_spot_analysis()` detail** (`spot_analysis/pipeline.py`):
-
-1. `cv2.imread(image_path)` — raises `ValueError` if image cannot be loaded.
-2. `detect_spots(img)` (`detection.py`):
-   - `preprocess_for_detection(img)`:
-     - BGR → grayscale.
-     - Large `GaussianBlur` (kernel 81×81) → background estimate.
-     - `cv2.divide(gray, bg, scale=255)` → normalise uneven lighting.
-     - CLAHE (clipLimit=2.0, tileSize=8×8) → local contrast enhancement.
-   - `GaussianBlur` (5×5) on normalised image.
-   - `adaptiveThreshold` (Gaussian, blockSize=35, C=2, THRESH_BINARY_INV).
-   - MORPH_OPEN (2×2 kernel) → remove noise.
-   - MORPH_CLOSE (3×3 kernel) → fill gaps.
-   - `findContours` external.
-   - Accept contours with area ∈ [450, 15,000 px²], circularity ≥ 0.45, solidity ≥ 0.65.
-   - Rejected candidates include a `reason` field (`"area"`, `"circularity"`, `"solidity"`).
-3. For each accepted spot, `inspect_spot_defects(gray_norm, spot)` (`inspection.py`):
-   - Draws filled contour mask.
-   - Extracts pixel values under mask.
-   - If < 80 pixels → not flagged (returns `False`).
-   - Computes **median** and **MAD** (Median Absolute Deviation).
-   - Modified Z-scores: `z = |val − median| / (1.4826 × MAD)`.
-   - `outlier_frac = fraction of pixels with z > 4.5`.
-   - If `outlier_frac > 0.16` → spot is `is_bad = True`, reason `"nonuniform"`.
-4. `sort_and_label(spots)` (`detection.py`):
-   - Sort by Y → group into rows using median-row-gap threshold.
-   - Within each row sort by X.
-   - Assign labels A1, A2, …, B1, B2, …
-5. `find_missing_spots(spots)` (`detection.py`):
-   - Builds row/column set from existing labels.
-   - Determines expected rectangular grid extent.
-   - Returns list of absent labels (e.g. `["A3", "B2"]`).
-6. `draw_accept_reject_overlay(img, spots)` (`visualization.py`):
-   - Contours: **blue** = good, **red** = bad.
-   - Center dot at centroid.
-   - Label text next to centroid.
-7. Saves `overlay.png` to output directory.
-8. `export_results_to_excel(path, result)` (`excel_export.py`):
-   - **Summary sheet:** Detected / Accepted / Rejected counts + accepted labels / rejected labels / missing spots rows.
-   - **Spots sheet:** Per-spot table — Label, Status, Area, Circularity, Solidity.
-9. Returns standardised result dict with all keys (see [Standardised Result Structure](#standardised-result-structure)).
-
-**Standardised result structure** returned by `run_spot_analysis()`:
-
-```python
-{
-    "all_spots":           list[dict],   # every accepted candidate
-    "accepted_spots":      list[dict],   # spots with no defects
-    "rejected_spots":      list[dict],   # defective spots
-    "rejected_candidates": list[dict],   # contours filtered at detection stage
-    "overlay_image":       np.ndarray,   # BGR colour-coded image
-    "accepted_labels":     list[str],    # e.g. ["A1", "A2", "B1"]
-    "rejected_labels":     list[str],    # e.g. ["B3"]
-    "missing_spots":       list[str],    # e.g. ["A3"]
-    "excel_path":          str | None,   # path to saved .xlsx
-    "error":               str | None,   # non-fatal error, e.g. Excel failure
-}
-```
-
-**Files involved:**
-
-| File | Role |
-|---|---|
-| `main.py` | Handler, `SpotAnalysisWorker` (QThread), `_on_we_finished()`, `_on_we_error()` |
-| `device_drivers/spot_analysis/pipeline.py` | `run_spot_analysis()` — public entry point |
-| `device_drivers/spot_analysis/detection.py` | `detect_spots()`, `sort_and_label()`, `find_missing_spots()` |
-| `device_drivers/spot_analysis/inspection.py` | `inspect_spot_defects()` — MAD-based outlier test |
-| `device_drivers/spot_analysis/visualization.py` | `draw_accept_reject_overlay()` |
-| `device_drivers/spot_analysis/excel_export.py` | `export_results_to_excel()` |
-| `device_drivers/spot_analysis/config.py` | All tuning constants |
-
-**Output:**
-- `artifacts/we_detection/overlay.png` — colour-coded spot overlay
-- `artifacts/we_detection/spot_results.xlsx` — Excel report
-
-**Log output example:**
-```
-[INFO] WE detection using plate image: artifacts/plate_detection/plate.png
-[INFO] Detected spots:  12
-[INFO] Accepted:        11
-[WARN] Rejected:        1
-[WARN] Rejected labels: B3
-[WARN] Missing spots:   A3
-[INFO] Excel saved:     artifacts/we_detection/spot_results.xlsx
-```
+- Runs the full `spot_analysis` pipeline in a background `QThread`.
+- Detects all working-electrode spots and inspects each for defects.
+- Saves 10 debug images to `artifacts/we_detection/`.
+- Exports `spot_results.xlsx` with per-spot metrics.
+- Displays the accept/reject colour overlay in the `ImageViewer`.
 
 ---
 
 ## Camera Settings Panel
 
-All controls are in `main.py` — the camera settings group.
+| Control | Effect |
+|---|---|
+| **Exposure** | Sets integration time (µs). Auto-exposure off. |
+| **Gain** | Analogue gain multiplier. |
+| **White Balance** | R / G / B channel multipliers for colour correction. |
+| **Apply** | Pushes current settings to `ThorlabsCamera`. |
 
-### Exposure
-
-- **Spinbox:** `spin_exposure` — range 1.0–5,000.0 ms, default 100 ms.
-- **Set button → `on_set_exposure()`:**
-  - Reads `spin_exposure.value()`, divides by 1000 (ms → sec).
-  - Calls `self.camera.set_exposure(exposure_sec)`.
-  - In `thorlabs_camera_wrapper.py`: forwards to pylablib `set_exposure()`.
-
-### Gain
-
-- **Spinbox:** `spin_gain` — range 0.0–48.0 dB, default 0.
-- **Set button → `on_set_gain()`:**
-  - Calls `self.camera.set_gain(gain)` → `self._cam.set_gain(gain)`.
-
-### White Balance
-
-- **Preset dropdown:** `combo_wb` — Default, Warm, Cool, Reduce NIR, Custom.
-- **`on_wb_preset_changed(preset)`:** Updates R/G/B spinboxes then calls `on_apply_white_balance()`.
-
-| Preset | R | G | B |
-|---|---|---|---|
-| Default | 1.0 | 1.0 | 1.0 |
-| Warm | 1.0 | 0.9 | 0.7 |
-| Cool | 0.9 | 1.0 | 1.2 |
-| Reduce NIR | 0.6 | 0.8 | 1.0 |
-| Custom | (unchanged) | | |
-
-- **Apply button → `on_apply_white_balance()`:**
-  - Calls `camera.set_white_balance(r, g, b)` → stores gains clamped to [0.1, 4.0].
-  - Applied in `grab_frame()` via `_apply_white_balance()`:
-    - Frame to `float32` → multiply each BGR channel by its gain → clip → `uint8`.
-
-**Files involved:** `main.py`, `device_drivers/thorlabs_camera_wrapper.py`
+Settings take effect on the next `snap()` call.
 
 ---
 
 ## Stage Control Panel
 
-### Position Display
-
-- `pos_label` — monospace label showing current XYZ.
-- **Refresh button → `on_refresh_position()`:** `motion_service.get_current_position()` → updates label and goto spinboxes.
-
-### Jog (Relative Move)
-
-- Six buttons: `±X`, `±Y`, `±Z`.
-- **`on_jog_axis(axis, direction)`:**
-  - `step = spin_step.value() × direction`.
-  - `motion_service.move_axis_relative(axis, step).result(timeout=30)`.
-  - Refreshes position display.
-
-### Absolute Move (Go To)
-
-- Three spinboxes: 0–300 mm.
-- **Go button → `on_goto_position()`:**
-  - Builds `Position(x, y, z)`.
-  - `motion_service.move_to_position_safe_z(target).result(timeout=60)`.
-  - Refreshes position display.
-
-**Files involved:**
-
-| File | Role |
+| Control | Effect |
 |---|---|
-| `main.py` | All panel UI and handlers |
-| `device_drivers/PI_Control_System/services/motion_service.py` | `move_axis_relative()`, `move_to_position_safe_z()`, `get_current_position()` |
-| `device_drivers/PI_Control_System/hardware/pi_controller.py` | Low-level GCS commands |
-| `device_drivers/PI_Control_System/core/models.py` | `Axis` enum, `Position` dataclass |
+| **X / Y / Z jog buttons** | Move axis by the configured step size. |
+| **Step size** | Editable spin-box (mm). |
+| **Go to position** | Absolute move to typed X, Y, Z coordinates. |
+| **Park** | Move to park position (default 200, 200, 200 mm). |
+
+All moves go through `MotionService` which enforces safe Z-ordering (see [Key Design Decisions](#key-design-decisions)).
+
+---
+
+## Vision & Analysis Pipeline
+
+### Plate detection (`GPT_Merge_v3.py`)
+1. Convert to grayscale → Canny edges → morphological close/dilate → find largest closed contour → plate bounding box.
+2. Adaptive threshold on the plate crop → filter contours by area, circularity, solidity → electrode spots.
+3. Sort spots into a grid, assign A1/A2/… labels.
+
+### Plate finder (`plate_finder.py`)
+- HSV colour segmentation: isolates the red frame (hue wraps 0/180°) and the grey plate interior.
+- Computes centroid offset from image centre → returns one of: `"left"`, `"right"`, `"up"`, `"down"`, `"ok"`.
+
+---
+
+## Spot Analysis Module
+
+`device_drivers/spot_analysis/` is a self-contained pipeline callable independently of the GUI:
+
+```python
+from device_drivers.spot_analysis.pipeline import run_spot_analysis
+
+result = run_spot_analysis(
+    image_path="path/to/plate.png",
+    output_dir="artifacts/we_detection",
+    export_excel=True,
+)
+```
+
+### Returned dict keys
+
+| Key | Type | Description |
+|---|---|---|
+| `all_spots` | `list[dict]` | All accepted candidate spots (with labels) |
+| `accepted_spots` | `list[dict]` | Spots with no detected defects |
+| `rejected_spots` | `list[dict]` | Spots flagged as defective |
+| `rejected_candidates` | `list[dict]` | Contours filtered out during detection |
+| `overlay_image` | `np.ndarray` | BGR accept/reject colour overlay |
+| `accepted_labels` | `list[str]` | e.g. `["A1", "A2", "B3"]` |
+| `rejected_labels` | `list[str]` | e.g. `["B1"]` |
+| `missing_spots` | `list[str]` | Expected grid labels that are absent |
+| `per_spot_metrics` | `dict` | `{label: metrics_dict}` for every accepted spot |
+| `excel_path` | `str \| None` | Path to `spot_results.xlsx`, or `None` |
+| `error` | `str \| None` | Non-fatal error string, or `None` |
+
+### Detection pipeline steps
+
+| Step | File | What happens |
+|---|---|---|
+| Grayscale + background normalisation | `detection.py` | Large-kernel Gaussian blur estimates illumination; divide-normalise removes it |
+| CLAHE | `detection.py` | Local contrast enhancement |
+| Adaptive threshold | `detection.py` | Binarise with adaptive block size |
+| Morphological open/close | `detection.py` | Remove noise, fill gaps |
+| Contour filter | `detection.py` | Area, circularity ≥ 0.45, solidity ≥ 0.65, diameter ≥ 1.5 mm |
+| Grid sort + labelling | `detection.py` | Spots sorted row-major → A1, A2, … |
+| Defect inspection | `inspection.py` | MAD outlier test + dark/bright quantile test per spot |
+| Visualisation | `visualization.py` | Green (accept) / red (reject) overlay |
+| Excel export | `excel_export.py` | `spot_results.xlsx` with per-spot metrics |
+
+### Tunable constants (`spot_analysis/config.py`)
+
+```python
+DEFAULT_MIN_SPOT_AREA       = 450      # px²
+DEFAULT_MAX_SPOT_AREA       = 15000    # px²
+DEFAULT_MIN_CIRCULARITY     = 0.45
+DEFAULT_MIN_SOLIDITY        = 0.65
+DEFAULT_PLATE_WIDTH_MM      = 50.0     # physical plate width (mm)
+DEFAULT_MIN_SPOT_DIAMETER_MM = 1.5    # minimum spot diameter (mm)
+DEFAULT_MAD_K               = 4.5     # MAD outlier multiplier
+DEFAULT_MAX_OUTLIER_FRAC    = 0.16    # max fraction of outlier pixels
+DEFAULT_DEFECT_AREA_FRAC    = 0.03    # min defect area as fraction of spot
+```
+
+---
+
+## Spot Alignment (Pixel → Stage)
+
+`device_drivers/spot_alignment.py` converts pixel coordinates (selected in the GUI via `ManualSpotDialog`) into absolute stage XY targets and produces Z-safe motion sequences.
+
+**Lab calibration constants** (edit here when the setup is re-calibrated):
+
+| Constant | Value | Meaning |
+|---|---|---|
+| `PIXEL_SCALE_MM` | 0.095 mm/px | Physical scale of one pixel |
+| `SFC_X`, `SFC_Y`, `SFC_Z` | 153.0, 83.0, 156.0 mm | Absolute stage position of the SFC opening |
+| `APPROACH_Z` | 161.0 mm | Z stop height before final contact (SFC_Z + 5 mm) |
+| Reference stage at capture | X=212.5, Y=206.1 mm | Stage position when the image was taken |
+
+**Z-safety rules enforced by `SpotAligner`:**
+1. Never move Z downward before XY alignment is complete.
+2. Always raise Z before moving between spots.
+3. Always stop at `APPROACH_Z` — never descend to `SFC_Z` here.
+4. Never go directly spot-to-spot without lifting Z.
 
 ---
 
 ## Full File Reference
 
 ### `main.py`
+Entry point. Sets up `lib/pi_dlls/` on `PATH` and `os.add_dll_directory` before any PI/Thorlabs imports. Defines two background workers:
+- `SpotAnalysisWorker(QThread)` — runs `run_spot_analysis()` off the UI thread.
+- `WeGptWorker(QThread)` — runs `GPT_Merge_v3.analyze_plate_and_spots()` off the UI thread.
 
-The single file that defines the entire GUI application (`SimpleStageApp(QMainWindow)`) and the background worker.
+Then launches `SimpleStageApp(use_mock=False)`.
 
-**No OpenCV or numpy imports at the module level.** All image I/O goes through `device_drivers/image_utils.py`.
+### `gui/app_window.py`
+Main window (`SimpleStageApp`, ~460 lines). Wires all widgets, implements all workflow handlers (connect, initialize, capture, detect, adjust, WE detect). Uses `QMetaObject.invokeMethod` for thread-safe GUI updates from the `EventBus`.
 
-| Class / Method | Description |
-|---|---|
-| `SpotAnalysisWorker(QThread)` | Background thread that calls `run_spot_analysis()` |
-| `SpotAnalysisWorker.finished` | `Signal(dict)` — emits result on success |
-| `SpotAnalysisWorker.error` | `Signal(str)` — emits error message on failure |
-| `SimpleStageApp.__init__` | Constructs all UI widgets and wires signals |
-| `log(message, level)` | Appends `[INFO]/[WARN]/[ERROR]` to the log panel |
-| `set_status(status, state)` | Updates the coloured status indicator |
-| `_show_image(img)` | Converts BGR ndarray → QPixmap and updates image panel |
-| `_is_stage_ready()` | Returns True if stage is connected and initialized |
-| `_pick_image_file(title)` | Opens file-picker dialog, returns path or None |
-| `on_connect_clicked()` | Connects PI stage controllers |
-| `on_initialize_clicked()` | References axes and parks stage |
-| `on_cam_start_clicked()` | Toggles live camera view |
-| `on_capture_clicked()` | Dispatches to camera or file-picker path |
-| `_capture_from_camera()` | Saves frame from camera to captures/ |
-| `_capture_from_file()` | Loads user-chosen image file |
-| `on_plate_clicked()` | Runs plate detection via GPT_Merge |
-| `on_adjust_clicked()` | Runs auto-adjust feedback loop |
-| `on_we_clicked()` | Launches SpotAnalysisWorker thread |
-| `_on_we_finished(result)` | UI callback: display overlay, log, show dialog |
-| `_on_we_error(error_msg)` | UI callback: log error, show critical dialog |
-| `on_set_exposure()` | Applies exposure spinbox value |
-| `on_set_gain()` | Applies gain spinbox value |
-| `on_wb_preset_changed(preset)` | Updates RGB spinboxes on preset selection |
-| `on_apply_white_balance()` | Applies RGB gains to camera |
-| `on_refresh_position()` | Reads and displays current stage position |
-| `on_jog_axis(axis, direction)` | Moves one axis by step size |
-| `on_goto_position()` | Moves stage to absolute XYZ coordinates |
-| `_update_live_view()` | Timer callback for live preview |
-| `closeEvent(event)` | Disconnects hardware cleanly on exit |
+### `gui/widgets/toolbar.py`
+`WorkflowToolbar` — horizontal row of workflow buttons. Emits signals consumed by `app_window.py`.
 
----
+### `gui/widgets/camera_settings.py`
+Exposure, gain, white-balance controls. Calls `ThorlabsCamera` setters on Apply.
 
-### `device_drivers/image_utils.py`
+### `gui/widgets/stage_control.py`
+Jog buttons, step size, absolute-move form, park button. Calls `MotionService`.
 
-Thin I/O layer that keeps `cv2` and `numpy` out of `main.py`.
+### `gui/widgets/image_viewer.py`
+`ImageViewer` wraps `QGraphicsView` for zoomable, pannable image display.
 
-| Function | Description |
-|---|---|
-| `load_image(path)` | `cv2.imread` wrapper — returns BGR ndarray or None |
-| `save_image(path, img)` | `cv2.imwrite` wrapper — creates parent dirs, returns bool |
-| `bgr_to_rgb(img)` | `cv2.cvtColor(BGR→RGB)` — used before Qt display |
+### `gui/widgets/log_panel.py`
+`LogPanel` — scrollable `QTextEdit` with timestamped log lines.
 
----
-
-### `device_drivers/GPT_Merge.py`
-
-Unified plate + spot detection used by **Plate Detect**. Not used by WE Detect.
-
-| Function | Description |
-|---|---|
-| `resize_image(img, percent)` | Resize by percentage using Lanczos |
-| `detect_plate(image)` | Canny edge → largest contour → bounding rect |
-| `detect_spots(plate_img, ...)` | Adaptive threshold → filter by area + circularity |
-| `compute_inspection_radius(spots)` | `r_check = 3 × (min_radius / 4)` |
-| `has_bubble_or_hole(gray, spot, r_check)` | CV-based bubble + Otsu topology hole check |
-| `sort_and_label(spots)` | Sort into rows/columns, assign A1/B2/… labels |
-| `draw_results(image, spots, px, py)` | Draw contours, centers, labels |
-| `analyze_plate_and_spots(image_path, ...)` | **Main entry point** — returns full result dict |
-
----
-
-### `device_drivers/spot_analysis/`
-
-The modular spot analysis pipeline. Only this system is used for **WE Detect**.
-
-#### `config.py`
-
-All tuning constants. Edit here — never hardcode values in algorithm files.
-
-| Constant | Value | Purpose |
-|---|---|---|
-| `DEFAULT_MIN_SPOT_AREA` | 450 px² | Minimum valid spot area |
-| `DEFAULT_MAX_SPOT_AREA` | 15,000 px² | Maximum valid spot area |
-| `DEFAULT_MIN_CIRCULARITY` | 0.45 | Minimum roundness |
-| `DEFAULT_MIN_SOLIDITY` | 0.65 | Minimum solidity (area / convex hull area) |
-| `DEFAULT_BG_BLUR_K` | 81 | Kernel size for background blur |
-| `DEFAULT_CLAHE_CLIP` | 2.0 | CLAHE clip limit |
-| `DEFAULT_CLAHE_TILE` | (8, 8) | CLAHE tile grid size |
-| `DEFAULT_THRESH_BLOCKSIZE` | 35 | Adaptive threshold block size |
-| `DEFAULT_THRESH_C` | 2 | Adaptive threshold C constant |
-| `DEFAULT_OPEN_KERNEL` | 2 | Morphological open kernel size |
-| `DEFAULT_CLOSE_KERNEL` | 3 | Morphological close kernel size |
-| `DEFAULT_MAD_K` | 4.5 | Z-score threshold for outlier pixels |
-| `DEFAULT_MAX_OUTLIER_FRAC` | 0.16 | Max outlier fraction before spot is flagged bad |
-| `DEFAULT_DARK_Q` | 10 | 10th-percentile intensity reference |
-| `DEFAULT_BRIGHT_Q` | 95 | 95th-percentile intensity reference |
-
-#### `detection.py`
-
-| Function | Description |
-|---|---|
-| `preprocess_for_detection(bgr)` | Grayscale → background subtraction → CLAHE |
-| `detect_spots(image)` | Full detection pipeline → returns `(spots, rejected, debug)` |
-| `sort_and_label(spots)` | Sort into rows/columns, assign A1/B2/… labels in-place |
-| `find_missing_spots(labeled_spots)` | Compare present labels against expected grid → return missing label list |
-
-#### `inspection.py`
-
-| Function | Description |
-|---|---|
-| `inspect_spot_defects(gray, spot)` | Mask spot, extract pixels, compute MAD Z-scores, flag if outlier fraction > threshold |
-
-#### `visualization.py`
-
-| Function | Description |
-|---|---|
-| `draw_accept_reject_overlay(image, spots)` | Blue (good) / red (bad) contours + center dots + labels |
-
-#### `excel_export.py`
-
-| Function | Description |
-|---|---|
-| `export_results_to_excel(path, result)` | Write Summary sheet (counts + label lists + missing) and Spots sheet (per-spot metrics) |
-
-#### `pipeline.py`
-
-| Function | Description |
-|---|---|
-| `run_spot_analysis(image_path, output_dir, export_excel)` | Full pipeline: load → detect → inspect → label → find gaps → visualise → save → return dict |
-
----
+### `config/app_config_loader.py`
+`load_app_config()` — reads `app_config.yaml` (mock mode flag, DLL directories).
 
 ### `device_drivers/thorlabs_camera_wrapper.py`
+`ThorlabsCamera` — thin pylablib wrapper. Methods: `snap()`, `start_live()`, `stop_live()`, `set_exposure()`, `set_gain()`, `set_white_balance()`. Converts 16-bit sensor output to 8-bit for display.
 
-| Method | Description |
-|---|---|
-| `connect()` | Sets DLL path, opens first camera, sets default exposure/gain |
-| `disconnect()` | Stops acquisition, closes camera |
-| `grab_frame()` | `snap()` → normalise → handle grayscale → apply WB → return BGR ndarray |
-| `save_frame(path)` | `grab_frame()` then `cv2.imwrite` |
-| `set_exposure(sec)` | Forwards to pylablib |
-| `set_gain(db)` | Forwards to pylablib |
-| `set_white_balance(r, g, b)` | Stores clamped gains |
-| `_apply_white_balance(frame)` | Multiplies BGR channels, clips to [0, 255] |
-
----
+### `device_drivers/GPT_Merge_v3.py`
+Active plate + spot detection entry point. `analyze_plate_and_spots(image)` → dict with plate bbox, spot list, labelled overlay. (`GPT_Merge.py` and `GPT_Merge_v2.py` are older iterations kept for reference.)
 
 ### `device_drivers/plate_finder.py`
-
-| Function | Description |
-|---|---|
-| `gray_plate_on_red(image_path, margin_frac, debug)` | HSV red detection → non-red dark region → 4-corner filter → inside-check → direction hint |
-
-Returns dict with keys: `rect_bbox`, `fully_in_frame`, `move_hint`, `output_image`, `save_path`.
-
-`move_hint` values: `"ok"`, `"left"`, `"right"`, `"up"`, `"down"`, `"left_up"`, `"no_red"`, `"no_plate"`, `"adjust"`.
-
----
+HSV colour segmentation for the red frame and grey plate. Returns a movement hint string for the auto-adjuster.
 
 ### `device_drivers/plate_auto_adjuster.py`
+`auto_adjust_plate(camera, motion_service)` — closed-loop centering loop (≤10 iterations, 5 mm step per iteration).
 
-| Function | Description |
-|---|---|
-| `auto_adjust_plate(motion_service, camera, save_dir, step_mm, max_iterations)` | Capture → `gray_plate_on_red` → map hint to ΔX/ΔY → move stage → repeat |
+### `device_drivers/spot_alignment.py`
+`SpotAligner` + `AlignmentResult` — pixel-to-stage coordinate conversion and Z-safe motion sequence generation.
 
-Returns `(fully_in_frame: bool, final_hint: str, log_messages: list[str])`.
+### `device_drivers/image_utils.py`
+Utility functions: `load_image()`, `save_image()`, `bgr_to_rgb()`.
 
----
+### `device_drivers/spot_analysis/`
+See [Spot Analysis Module](#spot-analysis-module) above.
 
 ### `device_drivers/PI_Control_System/`
+Self-contained PI stage subsystem. Entry point: `app_factory.create_services(use_mock)`.
 
-#### `app_factory.py`
-
-| Function | Description |
+| File | Role |
 |---|---|
-| `create_services(use_mock)` | Loads config, creates executor, EventBus, 3 controllers, ConnectionService, MotionService |
+| `core/models.py` | Frozen dataclasses: `Axis`, `Position`, `ConnectionState`, `InitializationState` |
+| `core/hardware/interfaces.py` | `AxisController` ABC |
+| `hardware/pi_manager.py` | Coordinates 3 axes; enforces Z→X→Y reference order |
+| `hardware/pi_controller.py` | Real `pipython` implementation |
+| `hardware/mock_controller.py` | Deterministic mock for testing |
+| `services/event_bus.py` | Thread-safe pub/sub |
+| `services/connection_service.py` | USB connection lifecycle |
+| `services/motion_service.py` | Moves, safe Z-ordering, motion sequences |
+| `config/` | 7-layer merge chain: `defaults.json` → local overrides → env var `PI_STAGE_CONFIG_PATH` |
 
-#### `config/defaults.json`
-
-Hardware configuration. Edit to change COM ports, serial numbers, velocity, park position.
-
-#### `core/models.py`
-
-| Class | Description |
-|---|---|
-| `Axis` | Enum: `X`, `Y`, `Z` |
-| `Position` | Dataclass: `x`, `y`, `z` floats (mm) |
-| `ConnectionState` | Enum: `DISCONNECTED`, `CONNECTING`, `CONNECTED`, `ERROR` |
-| `InitializationState` | Enum: `NOT_INITIALIZED`, `INITIALIZING`, `INITIALIZED` |
-| `AxisConfig` | Per-axis config: port, baud, serial, travel range, velocity |
-
-#### `hardware/pi_controller.py`
-
-`PIAxisController` wraps a `pipython.GCSDevice` for one physical controller.
-
-| Method | Description |
-|---|---|
-| `connect()` | Opens GCS device over USB/serial |
-| `reference()` | FPL homing command |
-| `move_absolute(pos)` | GCS `MOV` |
-| `move_relative(dist)` | GCS `MVR` |
-| `get_position()` | GCS `qPOS` |
-
-#### `hardware/mock_controller.py`
-
-`MockAxisController` — identical interface, simulates motion in memory. Used when `use_mock=True`.
-
-#### `services/connection_service.py`
-
-All methods return `Future` objects (non-blocking).
-
-| Method | Description |
-|---|---|
-| `connect()` | Dispatches `_connect_all()` to thread executor |
-| `initialize()` | Dispatches `_initialize_all()` (references all axes) |
-| `shutdown()` | Disconnects all controllers |
-| `is_ready()` | True if both CONNECTED and INITIALIZED |
-
-#### `services/motion_service.py`
-
-All motion commands return `Future`.
-
-| Method | Description |
-|---|---|
-| `move_to_position(target)` | Simultaneous XYZ move |
-| `move_to_position_safe_z(target)` | Z-safe ordered move |
-| `move_axis_relative(axis, distance)` | Jog one axis |
-| `move_axis_absolute(axis, position)` | Move one axis to absolute position |
-| `get_current_position()` | Returns current `Position` snapshot |
-
-#### `services/event_bus.py`
-
-Pub/sub system. Events: `CONNECTION_STARTED`, `CONNECTION_SUCCEEDED`, `STATE_CHANGED`, `MOTION_STARTED`, `MOTION_COMPLETED`, `ERROR`.
+PI stage CLI:
+```bash
+python -m device_drivers.PI_Control_System.config show
+python -m device_drivers.PI_Control_System.config set --park-position X=200.0 Y=200.0 Z=200.0
+```
 
 ---
 
 ## Output Artifacts
 
-All output files are written under `artifacts/` in the project root (created automatically).
+| Path | Contents |
+|---|---|
+| `artifacts/plate_detection/` | Captured images, plate detection overlays |
+| `artifacts/we_detection/` | 10 debug images from `run_spot_analysis()` + `spot_results.xlsx` |
 
-| Directory | Created by | Contents |
-|---|---|---|
-| `artifacts/captures/` | Capture button | `Photo_<exp>_<gain>_<R>_<G>_<B>[_N].png` — raw frames |
-| `artifacts/plate_detection/` | Plate Detect button | `plate.png` — cropped plate; `all_detected.png`, `accepted_only.png` |
-| `artifacts/we_detection/` | WE Detect button | `overlay.png` — colour-coded spots; `spot_results.xlsx` — Excel report |
-| `artifacts/auto_adjust/` | Auto Adjust button | `auto_adjust_N.png` per iteration; `*_checked.png` annotated copies |
+Debug image sequence written by `run_spot_analysis()`:
+
+```
+01_original.png
+02_gray_raw.png
+03_bg.png
+04_gray_norm.png
+05_blur.png
+06_thresh_bw.png
+07_opened.png
+08_closed.png
+09_rejected_candidates_overlay.png   ← yellow: contours filtered out
+10_accept_reject_overlay.png         ← green: ok, red: defective
+```
+
+`spot_results.xlsx` sheets:
+- **All_Spots** — every detected spot with metrics
+- **Rejected_Spots** — defective spots only
+- **Summary** — accepted/rejected counts, missing spots
 
 ---
 
 ## Configuration
 
-### PI Stage — `device_drivers/PI_Control_System/config/defaults.json`
+### `config/app_config.yaml`
+```yaml
+use_mock: false          # true = no hardware required
 
-```json
-{
-  "controllers": {
-    "X": { "port": "COM5", "baud": 115200, "serialnum": "025550131" },
-    "Y": { "port": "COM3", "baud": 115200, "serialnum": "025550143" },
-    "Z": { "port": "COM4", "baud": 115200, "serialnum": "025550149" }
-  },
-  "travel_ranges": {
-    "X": { "min": 5.0, "max": 200.0 },
-    "Y": { "min": 0.0, "max": 200.0 },
-    "Z": { "min": 15.0, "max": 200.0 }
-  },
-  "motion": {
-    "default_velocity": 10.0,
-    "max_velocity": 20.0,
-    "park_position": 200.0
-  }
-}
+thorlabs:
+  dll_dir: "C:\\Program Files\\Thorlabs\\ThorImageCAM\\Bin"
+
+pi_stage:
+  config_path: ""        # override PI config directory (or set PI_STAGE_CONFIG_PATH env var)
 ```
 
-### Spot Detection Tuning — `device_drivers/spot_analysis/config.py`
+### PI stage config (7-layer merge)
+1. Built-in defaults (`defaults.json`)
+2. User local overrides
+3. Environment variable `PI_STAGE_CONFIG_PATH`
 
-All detection and inspection thresholds are in this file.  Edit constants here; no algorithm code changes needed.
+### Spot analysis constants
+Edit `device_drivers/spot_analysis/config.py` to tune detection sensitivity without touching pipeline code.
 
-### Camera DLL Path — `main.py`
+---
 
-```python
-TL_DLL_DIR = r"C:\Program Files\Thorlabs\ThorImageCAM\Bin"
+## Testing
+
+All 123 tests run without any hardware (uses `MockAxisController` via dependency injection):
+
+```bash
+# Run all tests
+pytest device_drivers/PI_Control_System/tests/ -v
+
+# Single module
+pytest device_drivers/PI_Control_System/tests/test_motion_service.py -v
+
+# With coverage
+pytest --cov=device_drivers device_drivers/PI_Control_System/tests/
 ```
 
-Change if the Thorlabs SDK is installed in a non-default location.
+Tests use `pytest-qt` for GUI testing. `conftest.py` at `device_drivers/PI_Control_System/tests/conftest.py` adds `device_drivers/` to `sys.path`.
+
+---
+
+## Key Design Decisions
+
+| Decision | Reason |
+|---|---|
+| **Frozen dataclasses** for all data models | Thread safety via immutability — no locks needed for read-only state |
+| **Safe Z-ordering** in `MotionService` | When lowering Z: move XY first. When raising Z: lift Z first. Prevents collisions. |
+| **PI reference sequence: Z before X, Y** | Physical safety constraint of this stage configuration |
+| **DLL paths set before any imports** | `pipython` and pylablib load DLLs at import time; path must exist first |
+| **`ThreadPoolExecutor` for hardware I/O** | Keeps USB/serial blocking calls off the Qt main thread |
+| **`QThread` workers for vision** | `run_spot_analysis()` can take seconds; must not freeze the GUI |
+| **`EventBus` + `invokeMethod`** | Services on worker threads publish events; GUI marshals back to main thread safely |
+| **`_archive/`** | Old implementations kept for reference — do not modify |
